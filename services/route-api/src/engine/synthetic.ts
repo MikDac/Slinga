@@ -22,6 +22,7 @@ export interface SyntheticEngineOptions {
 
 export class SyntheticEngine implements RoutingEngine {
   readonly kind = 'synthetic';
+  readonly profile = 'foot';
   private readonly deviationBand: number;
   private readonly detourFactor: number;
   private readonly failingSeeds: Set<number>;

@@ -5,8 +5,9 @@ set a target distance (e.g. 8 km), and get ranked loop / out-and-back routes who
 real length is close to the target — drawn on a map and exportable as GPX.
 
 **[PLANNING.md](./PLANNING.md) is the project's source of truth** (requirements,
-feasibility analysis, architecture, phased plan). Current status: **Phase 0**
-(de-risking spikes & engineering foundation).
+feasibility analysis, architecture, phased plan); **[STATUS.md](./STATUS.md) holds the
+current state** (decisions, assumptions, measured results — updated every session).
+Current status: **Phase 0** (de-risking spikes & engineering foundation).
 
 ## Repository layout (pnpm monorepo)
 

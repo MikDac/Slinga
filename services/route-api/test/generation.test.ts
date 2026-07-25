@@ -22,7 +22,9 @@ describe('RouteGenerator', () => {
       table,
     );
     await generator.generate(MUNICH.lon, MUNICH.lat, PREFS, { fanout: 8 });
-    expect(table.get(MUNICH.lat, MUNICH.lon)).toBeGreaterThan(1.2);
+    // Learned under the engine's own namespace — and only there.
+    expect(table.get('synthetic:foot', MUNICH.lat, MUNICH.lon)).toBeGreaterThan(1.2);
+    expect(table.get('graphhopper:foot', MUNICH.lat, MUNICH.lon)).toBe(1);
 
     // Second request pre-corrects: realized lengths should now bracket the target.
     const result = await generator.generate(MUNICH.lon, MUNICH.lat, PREFS, { fanout: 8 });

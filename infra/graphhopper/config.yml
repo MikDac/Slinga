@@ -7,7 +7,12 @@ graphhopper:
   graph.location: /gh-data/graph-cache
 
   # Encoded values consumed by custom models and per-edge path details (§4.2).
-  graph.encoded_values: surface, road_class, road_environment, smoothness, hike_rating, average_slope, foot_network
+  # average_slope is deliberately absent: it requires elevation import, which is
+  # disabled for the Phase 0 spike (SRTM does not cover Sweden above 60°N; elevation
+  # profiles come from terrain tiles server-side in Phase 1 — see STATUS.md).
+  # foot_access/foot_priority/foot_average_speed are required by the built-in
+  # foot.json/hike.json custom models and must be listed explicitly in GH 9.
+  graph.encoded_values: surface, road_class, road_environment, smoothness, hike_rating, foot_network, foot_access, foot_priority, foot_average_speed
 
   profiles:
     - name: foot

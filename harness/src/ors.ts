@@ -11,6 +11,7 @@ const ORS_BASE = 'https://api.openrouteservice.org';
 
 export class OrsEngine implements RoutingEngine {
   readonly kind = 'ors';
+  readonly profile = 'foot-walking';
 
   constructor(private readonly apiKey: string) {}
 

@@ -49,7 +49,7 @@ Each item below materially affects design. Where the brief was silent, a working
 
 **Navigation.** **[ASSUMED]** MVP provides map display + GPX export (usable in Garmin/Apple Watch/komoot/any nav app) and a simple "follow along" screen (user's live position on the route polyline). Turn-by-turn voice navigation is Phase 3 — it is a large, separable subsystem.
 
-**Geography at launch.** **[OPEN — needs decision before Phase 1]** Self-hosting favors launching with a bounded region set (e.g., Europe, or a country list) and expanding. A planet-scale graph is feasible (~40–60 GB RAM for GraphHopper) but pointlessly expensive for validation. Proposed default: **Europe extract** at launch (fits the likely first users and a mid-size server), planet when justified. This choice affects server sizing only, not code.
+**Geography at launch.** **[DECIDED — 2026-07-25]** Launch region is **Europe**; the Phase 0 spike runs on the **Sweden** extract (see STATUS.md). A planet-scale graph is feasible (~40–60 GB RAM for GraphHopper) but pointlessly expensive for validation; expand region-by-region when justified. This choice affects server sizing only, not code.
 
 **Monetization.** **[OPEN]** Not needed for architecture now, but note: several "free" hosted tiers used for prototyping (openrouteservice, Stadia free, MapTiler free, GraphHopper free) are **non-commercial only**. The recommended production stack (self-hosted GraphHopper + OpenFreeMap tiles) is safe for commercial use, so monetizing later does not force a replatform. Revisit if any non-recommended component is swapped in.
 
@@ -282,9 +282,9 @@ Accessibility & safety notes: dark mode for pre-dawn runners; large touch target
 
 **Open questions needing a human decision (consolidated):**
 
-1. Launch region set (default proposal: Europe extract) — needed before Phase 1 infra sizing.
+1. ~~Launch region set~~ **RESOLVED [DECIDED, 2026-07-25]: Europe** at launch; Phase 0 spike extract = **Sweden**.
 2. ~~Release order~~ **RESOLVED [DECIDED, rev. 3]: web-first MVP**, then native iOS (rev. 2 analysis applies at that point), then Android behind its validation gate. What _triggers_ the native phase is open question 9.
-3. Confirm ±10% tolerance and 3–5 results as product defaults (currently assumed).
+3. ~~Confirm ±10% tolerance and 3–5 results~~ **RESOLVED [DECIDED, 2026-07-25]: confirmed as product defaults.**
 4. Monetization intent (affects nothing now; affects tier choices later).
 5. App name / branding (needed for store metadata by Phase 3 release prep).
 6. ~~Web app timing~~ **RESOLVED [DECIDED, rev. 3]:** the web app _is_ the MVP. The open timing question now concerns the native iOS app (question 9).
@@ -297,6 +297,8 @@ Accessibility & safety notes: dark mode for pre-dawn runners; large touch target
 ## 8. Implementation plan
 
 Execution model: autonomous implementation by Claude Code, trunk-based development, every phase gated by measurable acceptance criteria and demoable artifacts. CI/CD is set up in Phase 0 _before_ feature code, so every subsequent commit flows through the full pipeline. Timeboxes assume one autonomous agent working sequentially; they are gates of scope, not calendar promises.
+
+**Accepted implementation deviations:** the generation endpoint is `POST /v1/routes/generate` (not the `POST /routes:generate` written below) — Fastify treats `:` in a path as a route-parameter marker, and the `/v1` prefix gives contract versioning for free. Accepted 2026-07-25; the OpenAPI contract in `packages/api-contract` is authoritative. ORS hosted validation in CI is gated on an `ORS_API_KEY` secret and skipped silently when absent.
 
 ### Phase 0 — De-risking spikes & engineering foundation (gate: algorithm go/no-go)
 

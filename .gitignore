@@ -11,6 +11,10 @@ coverage/
 # Harness output (reports are generated artifacts)
 harness/out/
 
+# Playwright output
+apps/web/test-results/
+apps/web/playwright-report/
+
 # Local env & secrets
 .env
 .env.*

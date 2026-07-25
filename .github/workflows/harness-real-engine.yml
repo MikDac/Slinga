@@ -1,0 +1,185 @@
+# Phase 0.1 spike: measure the M0 acceptance gate against real GraphHopper on a real
+# OSM extract, using CI as the runtime (no VPS yet). See PLANNING.md §8 and STATUS.md.
+#
+# The gate (enforced by the harness exit code):
+#   ≥90% of urban/suburban cells with ≥1 candidate within ±10% of target
+#   p95 per-cell generation latency < 3 s (graph build time excluded by construction)
+#
+# Latency numbers here are indicative of runner hardware only — re-measure on the VPS.
+
+name: harness-real-engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'Geofabrik region path'
+        default: 'europe/sweden'
+        type: string
+      fanout:
+        description: 'Round-trip candidates per cell'
+        default: '8'
+        type: string
+  schedule:
+    - cron: '17 3 * * 1' # weekly Monday 03:17 UTC
+
+env:
+  # Bump to force a fresh extract download (Geofabrik only serves -latest; the cache
+  # key below is our pragmatic pin). Record the actual file date from extract-info.txt.
+  EXTRACT_PIN: '2026-07'
+  GH_VERSION: '9.1'
+  REGION: ${{ inputs.region || 'europe/sweden' }}
+  FANOUT: ${{ inputs.fanout || '8' }}
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner headroom & hardware note
+        run: |
+          echo "## Runner hardware" >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; nproc; grep -m1 'model name' /proc/cpuinfo || true; free -h; df -h /; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          FREE_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          MEM_GB=$(free -g | awk '/Mem:/ {print $2}')
+          echo "free disk: ${FREE_GB} GB, RAM: ${MEM_GB} GB"
+          if [ "$FREE_GB" -lt 8 ] || [ "$MEM_GB" -lt 12 ]; then
+            echo "::error::Insufficient headroom for ${REGION} (need ≥8 GB disk, ≥12 GB RAM)."
+            echo "Fallback: re-dispatch with region=europe/denmark and record it in STATUS.md."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install & build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Restore extract + graph cache
+        id: graph-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            infra/graphhopper/data
+            graphhopper-web.jar
+          key: gh-graph-${{ env.REGION }}-${{ env.EXTRACT_PIN }}-gh${{ env.GH_VERSION }}-${{ hashFiles('infra/graphhopper/config.yml') }}
+
+      - name: Download GraphHopper ${{ env.GH_VERSION }} JAR
+        run: |
+          if [ ! -f graphhopper-web.jar ]; then
+            curl -fsSL --retry 4 --retry-delay 5 \
+              -o graphhopper-web.jar \
+              "https://repo1.maven.org/maven2/com/graphhopper/graphhopper-web/${GH_VERSION}/graphhopper-web-${GH_VERSION}.jar"
+          fi
+          ls -lh graphhopper-web.jar
+
+      - name: Download OSM extract (${{ env.REGION }})
+        run: |
+          mkdir -p infra/graphhopper/data harness/out
+          PBF=infra/graphhopper/data/extract.osm.pbf
+          if [ -f "$PBF" ]; then
+            echo "extract: from cache (pin ${EXTRACT_PIN})" | tee harness/out/extract-info.txt
+          else
+            curl -fsSL --retry 4 --retry-delay 10 -D headers.txt \
+              -o "$PBF" "https://download.geofabrik.de/${REGION}-latest.osm.pbf"
+            echo "extract: freshly downloaded (pin ${EXTRACT_PIN})" | tee harness/out/extract-info.txt
+            grep -i '^last-modified' headers.txt | tee -a harness/out/extract-info.txt || true
+            # New extract invalidates any cached graph.
+            rm -rf infra/graphhopper/data/graph-cache
+          fi
+          { md5sum "$PBF"; ls -lh "$PBF"; } | tee -a harness/out/extract-info.txt
+
+      - name: Start GraphHopper & wait for graph (build on cache miss)
+        run: |
+          java -Xmx11g -Xms2g \
+            -Ddw.graphhopper.datareader.file=infra/graphhopper/data/extract.osm.pbf \
+            -Ddw.graphhopper.graph.location=infra/graphhopper/data/graph-cache \
+            -jar graphhopper-web.jar server infra/graphhopper/config.yml > gh-server.log 2>&1 &
+          echo $! > gh.pid
+          echo "Waiting for GraphHopper health (import can take tens of minutes on first run)…"
+          START=$(date +%s)
+          for i in $(seq 1 720); do
+            if curl -fs http://localhost:8989/health > /dev/null 2>&1; then
+              echo "GraphHopper healthy after $(( $(date +%s) - START )) s (graph build time — excluded from gate latency)."
+              exit 0
+            fi
+            if ! kill -0 "$(cat gh.pid)" 2>/dev/null; then
+              echo "::error::GraphHopper process died during import."
+              tail -80 gh-server.log
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::GraphHopper did not become healthy within 60 min."
+          tail -80 gh-server.log
+          exit 1
+
+      - name: Run spike harness (full matrix, real engine)
+        run: ENGINE=graphhopper GRAPHHOPPER_URL=http://localhost:8989 FANOUT="$FANOUT" pnpm --filter @slinga/harness spike
+
+      - name: Report to job summary & log
+        if: always()
+        run: |
+          if [ -f harness/out/report.json ]; then
+            node -e '
+              const r = require("./harness/out/report.json");
+              const L = [];
+              L.push("## Spike result — " + (r.summary.gatePass ? "GATE: PASS ✅" : "GATE: FAIL ❌"));
+              L.push("");
+              L.push("| metric | value | gate |");
+              L.push("|---|---|---|");
+              L.push(`| urban/suburban valid share | ${(r.summary.urbanSuburbanValidShare*100).toFixed(1)}% | ≥90% |`);
+              L.push(`| urban/suburban ≥3 candidates | ${(r.summary.urbanSuburbanThreePlusShare*100).toFixed(1)}% | — |`);
+              L.push(`| latency p50/p95/max | ${r.summary.latencyP50Ms}/${r.summary.latencyP95Ms}/${r.summary.latencyMaxMs} ms | p95 <3000 |`);
+              L.push("");
+              L.push(`engine=${r.meta.engine}:${r.meta.profile} fanout=${r.meta.fanout} on ${r.meta.cpuModel} ×${r.meta.cpuCount}, ${r.meta.totalMemGb} GB RAM`);
+              L.push("");
+              L.push(r.meta.note);
+              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, L.join("\n") + "\n");
+            '
+          fi
+          echo "=== report.csv ==="; cat harness/out/report.csv || true
+          echo "=== extract-info ==="; cat harness/out/extract-info.txt || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-report-${{ github.run_number }}
+          path: |
+            harness/out/
+            gh-server.log
+          if-no-files-found: warn
+
+      - name: Save extract + graph cache
+        if: always() && steps.graph-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            infra/graphhopper/data
+            graphhopper-web.jar
+          key: ${{ steps.graph-cache.outputs.cache-primary-key }}
+
+      # ORS hosted validation is key-gated: runs only when the ORS_API_KEY secret
+      # exists (non-commercial free tier, prototyping only) — silent skip otherwise.
+      - name: ORS hosted validation (optional)
+        if: always()
+        env:
+          ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
+        run: |
+          if [ -n "$ORS_API_KEY" ]; then
+            ENGINE=ors FANOUT=4 pnpm --filter @slinga/harness spike || echo "::warning::ORS validation run failed (informational only)"
+          fi

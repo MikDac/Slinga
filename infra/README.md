@@ -31,6 +31,13 @@ engine (same pipeline, fake geometry):
 pnpm --filter @slinga/route-api dev   # ROUTING_ENGINE=synthetic
 ```
 
+## Real-engine spike in CI
+
+The `.github/workflows/harness-real-engine.yml` workflow measures the M0 acceptance
+gate against real GraphHopper (official Maven Central JAR, no Docker) on the Sweden
+extract, entirely inside a GitHub Actions runner — dispatch it manually or let the
+weekly cron run it. Reports (JSON/CSV/HTML gallery/GeoJSON) are uploaded as artifacts.
+
 ## Notes
 
 - OSM data refresh (weekly build → healthcheck → hot-swap, PLANNING.md §8 0.3) is

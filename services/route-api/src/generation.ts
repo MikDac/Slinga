@@ -11,18 +11,28 @@ import type { RoundTripParams, RoutingEngine } from './engine/types.js';
  * refine-on-miss round when nothing lands within tolerance.
  */
 
+/** Outcome of a single engine round-trip call, for failure-taxonomy reporting. */
+export type EngineCallOutcome = 'ok' | 'null' | 'error';
+
 export interface GenerateOptions {
   fanout: number;
   /** Seed offset so "shuffle" produces genuinely new candidates. */
   seedBase?: number;
   refineOnMiss?: boolean;
+  /** Observe every engine call's outcome (harness failure taxonomy). */
+  onEngineResult?: (outcome: EngineCallOutcome) => void;
 }
 
 export class RouteGenerator {
+  /** Scale-table namespace: corrections learned per engine kind + profile (never cross-polluted). */
+  private readonly scaleNamespace: string;
+
   constructor(
     private readonly engine: RoutingEngine,
     private readonly scaleTable: ScaleFactorTable = new ScaleFactorTable(),
-  ) {}
+  ) {
+    this.scaleNamespace = `${engine.kind}:${engine.profile}`;
+  }
 
   async generate(
     startLon: number,
@@ -36,13 +46,13 @@ export class RouteGenerator {
     const requests: RoundTripParams[] = Array.from({ length: fanout }, (_, i) => ({
       startLon,
       startLat,
-      requestedDistanceM: this.scaleTable.correctedRequest(startLat, startLon, target),
+      requestedDistanceM: this.correctedRequest(startLat, startLon, target),
       seed: seedBase + i,
       headingDeg: (360 / fanout) * i,
       preferences: prefs,
     }));
 
-    const candidates = await this.fanOut(requests, startLat, startLon);
+    const candidates = await this.fanOut(requests, startLat, startLon, options);
     let result = rankCandidates(candidates, prefs);
 
     if (!result.hasValidCandidate && refineOnMiss && result.nearestMisses.length > 0) {
@@ -55,12 +65,12 @@ export class RouteGenerator {
         .map((miss: ScoredCandidate, i: number): RoundTripParams => ({
           startLon,
           startLat,
-          requestedDistanceM: this.scaleTable.correctedRequest(startLat, startLon, target),
+          requestedDistanceM: this.correctedRequest(startLat, startLon, target),
           seed: seedBase + fanout + i,
           headingDeg: bearingOfCandidate(miss, startLon, startLat),
           preferences: prefs,
         }));
-      const refined = await this.fanOut(refinements, startLat, startLon);
+      const refined = await this.fanOut(refinements, startLat, startLon, options);
       result = rankCandidates([...candidates, ...refined], prefs);
     }
 
@@ -71,14 +81,32 @@ export class RouteGenerator {
     return prefs.tolerance ?? DEFAULT_TOLERANCE;
   }
 
-  private async fanOut(requests: RoundTripParams[], startLat: number, startLon: number) {
+  private correctedRequest(lat: number, lon: number, targetM: number): number {
+    return this.scaleTable.correctedRequest(this.scaleNamespace, lat, lon, targetM);
+  }
+
+  private async fanOut(
+    requests: RoundTripParams[],
+    startLat: number,
+    startLon: number,
+    options: GenerateOptions,
+  ) {
     const settled = await Promise.allSettled(requests.map((r) => this.engine.roundTrip(r)));
     const candidates = [];
     for (let i = 0; i < settled.length; i++) {
       const outcome = settled[i]!;
-      if (outcome.status !== 'fulfilled' || outcome.value === null) continue;
+      if (outcome.status !== 'fulfilled') {
+        options.onEngineResult?.('error');
+        continue;
+      }
+      if (outcome.value === null) {
+        options.onEngineResult?.('null');
+        continue;
+      }
+      options.onEngineResult?.('ok');
       const candidate = outcome.value;
       this.scaleTable.observe(
+        this.scaleNamespace,
         startLat,
         startLon,
         requests[i]!.requestedDistanceM,

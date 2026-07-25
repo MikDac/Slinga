@@ -23,24 +23,39 @@ interface GraphHopperRouteResponse {
   paths?: GraphHopperPath[];
 }
 
+export interface GraphHopperEngineOptions {
+  profile?: string;
+  /**
+   * Whether the engine's graph was built with elevation. Off for the Phase 0
+   * spike (SRTM gap above 60°N; elevation arrives via terrain tiles in Phase 1).
+   */
+  elevation?: boolean;
+}
+
 export class GraphHopperEngine implements RoutingEngine {
   readonly kind = 'graphhopper';
+  readonly profile: string;
+  private readonly elevation: boolean;
 
   constructor(
     private readonly baseUrl: string,
     private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    options: GraphHopperEngineOptions = {},
+  ) {
+    this.profile = options.profile ?? 'foot';
+    this.elevation = options.elevation ?? false;
+  }
 
   async roundTrip(params: RoundTripParams): Promise<RouteCandidate | null> {
     const body = {
-      profile: 'foot',
+      profile: this.profile,
       points: [[params.startLon, params.startLat]],
       algorithm: 'round_trip',
       'round_trip.distance': Math.round(params.requestedDistanceM),
       'round_trip.seed': params.seed,
       heading: [Math.round(params.headingDeg)],
       'ch.disable': true,
-      elevation: true,
+      elevation: this.elevation,
       instructions: true,
       points_encoded: false,
       details: ['surface'],

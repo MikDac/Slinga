@@ -1,7 +1,7 @@
 /**
- * Spike matrix start points (PLANNING.md §8, 0.1): urban core / suburban / rural /
- * waterfront across European cities plus a sparse area. Extend toward ~30 as the
- * spike proceeds; this starter set already covers every category.
+ * Spike matrix start points (PLANNING.md §8, 0.1) — all inside the Sweden extract
+ * (spike extract decision, see STATUS.md): urban core / suburban / rural /
+ * waterfront-archipelago / sparse north, mirroring the category mix the plan asks for.
  */
 
 export interface SpikePoint {
@@ -12,16 +12,16 @@ export interface SpikePoint {
 }
 
 export const SPIKE_POINTS: SpikePoint[] = [
-  { name: 'Munich Marienplatz', category: 'urban', lon: 11.5755, lat: 48.1374 },
-  { name: 'Munich Trudering (suburb)', category: 'suburban', lon: 11.6567, lat: 48.1136 },
   { name: 'Stockholm Gamla Stan', category: 'urban', lon: 18.0708, lat: 59.3251 },
+  { name: 'Stockholm Vasastan', category: 'urban', lon: 18.0464, lat: 59.3434 },
+  { name: 'Göteborg Inom Vallgraven', category: 'urban', lon: 11.9668, lat: 57.7038 },
+  { name: 'Uppsala centrum', category: 'urban', lon: 17.6389, lat: 59.8586 },
   { name: 'Stockholm Bromma (suburb)', category: 'suburban', lon: 17.9384, lat: 59.3389 },
-  { name: 'Paris Le Marais', category: 'urban', lon: 2.3617, lat: 48.8578 },
-  { name: 'Amsterdam Jordaan', category: 'urban', lon: 4.8797, lat: 52.3745 },
-  { name: 'Nice Promenade des Anglais', category: 'waterfront', lon: 7.2551, lat: 43.6949 },
-  { name: 'Lisbon Belém (waterfront)', category: 'waterfront', lon: -9.2077, lat: 38.6979 },
-  { name: 'Bavarian countryside (Egling)', category: 'rural', lon: 11.5069, lat: 47.9236 },
-  { name: 'Swedish sparse (Ludvika outskirts)', category: 'sparse', lon: 15.1608, lat: 60.1499 },
+  { name: 'Malmö Limhamn (suburb)', category: 'suburban', lon: 12.9346, lat: 55.5867 },
+  { name: 'Vaxholm (archipelago)', category: 'waterfront', lon: 18.3514, lat: 59.4022 },
+  { name: 'Malmö Västra Hamnen (waterfront)', category: 'waterfront', lon: 12.9754, lat: 55.6136 },
+  { name: 'Krokom, Jämtland (rural)', category: 'rural', lon: 14.4614, lat: 63.3282 },
+  { name: 'Arvidsjaur (sparse north)', category: 'sparse', lon: 19.1747, lat: 65.5906 },
 ];
 
 export const SPIKE_DISTANCES_M = [3000, 5000, 8000, 10_000, 21_000];

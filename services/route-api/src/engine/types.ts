@@ -17,6 +17,8 @@ export interface RoundTripParams {
  */
 export interface RoutingEngine {
   readonly kind: string;
+  /** Routing profile the engine queries with (e.g. "foot", "hike"). */
+  readonly profile: string;
   /** One round-trip candidate; null when the engine cannot produce a route (bad snap etc.). */
   roundTrip(params: RoundTripParams): Promise<RouteCandidate | null>;
   /** Cheap reachability check for /health. */

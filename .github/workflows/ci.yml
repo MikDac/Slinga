@@ -37,6 +37,44 @@ jobs:
         run: pnpm test
 
       # Pipeline sanity run of the spike harness against the synthetic engine —
-      # keeps the harness itself green; real engine runs are manual (Phase 0.1).
+      # keeps the harness itself green; real-engine runs live in harness-real-engine.yml.
       - name: Harness smoke (synthetic engine)
         run: ENGINE=synthetic FANOUT=8 pnpm --filter @slinga/harness spike
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        run: pnpm --filter @slinga/web exec playwright install --with-deps chromium
+
+      - name: Playwright E2E (mobile viewport, mocked geolocation)
+        run: pnpm --filter @slinga/web test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          if-no-files-found: ignore

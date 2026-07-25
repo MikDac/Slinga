@@ -1,16 +1,26 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { GraphHopperEngine, RouteGenerator, SyntheticEngine } from '@slinga/route-api';
-import type { RoutingEngine } from '@slinga/route-api';
+import type { EngineCallOutcome, RoutingEngine } from '@slinga/route-api';
 import { ScaleFactorTable } from '@slinga/route-core';
 import { OrsEngine } from './ors.js';
 import { SPIKE_DISTANCES_M, SPIKE_POINTS } from './points.js';
+import type { CandidateGeometry, CellResult } from './report.js';
+import {
+  buildGalleryHtml,
+  buildGeoJson,
+  collectMeta,
+  downsample,
+  summarize,
+  toCsv,
+} from './report.js';
 
 /**
  * Phase 0.1 route-generation quality harness (PLANNING.md §8).
  *
  * Runs the start-point × distance matrix against a selected engine and emits
- * JSON + CSV reports with the acceptance-gate metrics:
+ * report.json (meta + summary + cells), report.csv, gallery.html (self-contained
+ * SVG map gallery) and routes.geojson, with the acceptance-gate metrics:
  *   ≥90% of urban/suburban cells with ≥1 candidate within ±10%, p95 latency <3 s.
  *
  * Usage:
@@ -18,18 +28,6 @@ import { SPIKE_DISTANCES_M, SPIKE_POINTS } from './points.js';
  *   ENGINE=graphhopper GRAPHHOPPER_URL=http://localhost:8989 pnpm --filter @slinga/harness spike
  *   ENGINE=ors ORS_API_KEY=...  pnpm --filter @slinga/harness spike     # hosted, mind the 40/min quota
  */
-
-interface CellResult {
-  point: string;
-  category: string;
-  distanceM: number;
-  candidates: number;
-  hasValid: boolean;
-  bestAbsErrorRatio: number | null;
-  bestRepeatedEdgeShare: number | null;
-  latencyMs: number;
-  error?: string;
-}
 
 function makeEngine(): { engine: RoutingEngine; interRequestDelayMs: number } {
   const kind = process.env.ENGINE ?? 'synthetic';
@@ -56,24 +54,37 @@ async function main(): Promise<void> {
   const { engine, interRequestDelayMs } = makeEngine();
   const fanout = Number.parseInt(process.env.FANOUT ?? '8', 10);
   const generator = new RouteGenerator(engine, new ScaleFactorTable());
+  const meta = collectMeta(engine, fanout);
   const results: CellResult[] = [];
+  const galleryCells: {
+    cell: CellResult;
+    geometries: CandidateGeometry[];
+    start: [number, number];
+  }[] = [];
 
-  console.log(`Spike run: engine=${engine.kind}, fanout=${fanout}`);
+  console.log(
+    `Spike run: engine=${engine.kind}:${engine.profile}, fanout=${fanout}, ` +
+      `${meta.cpuModel} ×${meta.cpuCount}, ${meta.totalMemGb} GB RAM`,
+  );
   for (const point of SPIKE_POINTS) {
     for (const distanceM of SPIKE_DISTANCES_M) {
+      const counters = { ok: 0, null: 0, error: 0 };
+      const onEngineResult = (outcome: EngineCallOutcome) => {
+        counters[outcome]++;
+      };
       const startedAt = performance.now();
+      let cell: CellResult;
+      let geometries: CandidateGeometry[] = [];
       try {
         const result = await generator.generate(
           point.lon,
           point.lat,
-          {
-            routeType: 'loop',
-            distanceM,
-          },
-          { fanout },
+          { routeType: 'loop', distanceM },
+          { fanout, onEngineResult },
         );
-        const best = result.candidates[0] ?? result.nearestMisses[0] ?? null;
-        results.push({
+        const ranked = result.candidates.length > 0 ? result.candidates : result.nearestMisses;
+        const best = ranked[0] ?? null;
+        cell = {
           point: point.name,
           category: point.category,
           distanceM,
@@ -81,10 +92,22 @@ async function main(): Promise<void> {
           hasValid: result.hasValidCandidate,
           bestAbsErrorRatio: best ? Math.abs(best.distanceErrorRatio) : null,
           bestRepeatedEdgeShare: best ? best.repeatedEdgeShare : null,
+          candidateErrorRatios: ranked.map((c) => round4(c.distanceErrorRatio)),
+          engineCalls: counters.ok + counters.null + counters.error,
+          engineNulls: counters.null,
+          engineErrors: counters.error,
           latencyMs: Math.round(performance.now() - startedAt),
-        });
+        };
+        geometries = ranked.slice(0, 3).map((c) => ({
+          id: c.id,
+          distanceM: c.distanceM,
+          distanceErrorRatio: round4(c.distanceErrorRatio),
+          repeatedEdgeShare: round4(c.repeatedEdgeShare),
+          withinTolerance: c.withinTolerance,
+          coordinates: downsample(c.coordinates.map(([lon, lat]) => [lon, lat])),
+        }));
       } catch (e) {
-        results.push({
+        cell = {
           point: point.name,
           category: point.category,
           distanceM,
@@ -92,71 +115,56 @@ async function main(): Promise<void> {
           hasValid: false,
           bestAbsErrorRatio: null,
           bestRepeatedEdgeShare: null,
+          candidateErrorRatios: [],
+          engineCalls: counters.ok + counters.null + counters.error,
+          engineNulls: counters.null,
+          engineErrors: counters.error,
           latencyMs: Math.round(performance.now() - startedAt),
           error: e instanceof Error ? e.message : String(e),
-        });
+        };
       }
-      const last = results[results.length - 1]!;
+      results.push(cell);
+      galleryCells.push({ cell, geometries, start: [point.lon, point.lat] });
       console.log(
-        `  ${point.name} @ ${distanceM / 1000} km → ${last.candidates} candidates, ` +
-          `valid=${last.hasValid}, bestErr=${fmtPct(last.bestAbsErrorRatio)}, ${last.latencyMs} ms` +
-          (last.error ? ` ERROR: ${last.error}` : ''),
+        `  ${point.name} @ ${distanceM / 1000} km → ${cell.candidates} candidates, ` +
+          `valid=${cell.hasValid}, bestErr=${fmtPct(cell.bestAbsErrorRatio)}, ` +
+          `ok/null/err=${counters.ok}/${counters.null}/${counters.error}, ${cell.latencyMs} ms` +
+          (cell.error ? ` ERROR: ${cell.error}` : ''),
       );
       if (interRequestDelayMs > 0) await sleep(interRequestDelayMs);
     }
   }
 
+  const summary = summarize(results);
   const outDir = path.resolve(import.meta.dirname, '../out');
   await mkdir(outDir, { recursive: true });
-  await writeFile(path.join(outDir, 'report.json'), JSON.stringify(results, null, 2));
+  await writeFile(
+    path.join(outDir, 'report.json'),
+    JSON.stringify({ meta, summary, cells: results }, null, 2),
+  );
   await writeFile(path.join(outDir, 'report.csv'), toCsv(results));
-
-  printSummary(results);
-}
-
-function printSummary(results: CellResult[]): void {
-  const urbanish = results.filter((r) => r.category === 'urban' || r.category === 'suburban');
-  const validShare = share(urbanish, (r) => r.hasValid);
-  const threePlusShare = share(urbanish, (r) => r.candidates >= 3);
-  const latencies = [...results.map((r) => r.latencyMs)].sort((a, b) => a - b);
-  const p95 = latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))] ?? 0;
+  await writeFile(path.join(outDir, 'gallery.html'), buildGalleryHtml(meta, summary, galleryCells));
+  await writeFile(path.join(outDir, 'routes.geojson'), JSON.stringify(buildGeoJson(galleryCells)));
 
   console.log('\n=== Acceptance gate (PLANNING.md §8, 0.1) ===');
   console.log(
-    `urban/suburban cells with ≥1 candidate within ±10%: ${fmtPct(validShare)} (gate: ≥90%)`,
+    `urban/suburban cells with ≥1 candidate within ±10%: ${fmtPct(summary.urbanSuburbanValidShare)} (gate: ≥90%)`,
   );
-  console.log(`urban/suburban cells with ≥3 candidates:            ${fmtPct(threePlusShare)}`);
-  console.log(`p95 cell latency:                                   ${p95} ms (gate: <3000 ms)`);
-  const pass = validShare >= 0.9 && p95 < 3000;
-  console.log(pass ? 'GATE: PASS' : 'GATE: FAIL');
-  process.exitCode = pass ? 0 : 1;
-}
-
-function share<T>(items: T[], predicate: (item: T) => boolean): number {
-  return items.length === 0 ? 0 : items.filter(predicate).length / items.length;
-}
-
-function toCsv(results: CellResult[]): string {
-  const header =
-    'point,category,distance_m,candidates,has_valid,best_abs_error_ratio,best_repeated_edge_share,latency_ms,error';
-  const rows = results.map((r) =>
-    [
-      csvEscape(r.point),
-      r.category,
-      r.distanceM,
-      r.candidates,
-      r.hasValid,
-      r.bestAbsErrorRatio ?? '',
-      r.bestRepeatedEdgeShare ?? '',
-      r.latencyMs,
-      csvEscape(r.error ?? ''),
-    ].join(','),
+  console.log(
+    `urban/suburban cells with ≥3 candidates:            ${fmtPct(summary.urbanSuburbanThreePlusShare)}`,
   );
-  return [header, ...rows].join('\n') + '\n';
+  console.log(
+    `latency p50/p95/max:                                ${summary.latencyP50Ms}/${summary.latencyP95Ms}/${summary.latencyMaxMs} ms (gate: p95 <3000 ms)`,
+  );
+  console.log(
+    `hardware: ${meta.cpuModel} ×${meta.cpuCount}, ${meta.totalMemGb} GB RAM — ${meta.note}`,
+  );
+  console.log(summary.gatePass ? 'GATE: PASS' : 'GATE: FAIL');
+  process.exitCode = summary.gatePass ? 0 : 1;
 }
 
-function csvEscape(s: string): string {
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+function round4(x: number): number {
+  return Math.round(x * 10_000) / 10_000;
 }
 
 function fmtPct(x: number | null): string {
