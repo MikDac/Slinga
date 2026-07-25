@@ -1,0 +1,22 @@
+{
+  "name": "@slinga/harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Phase 0 route-generation quality harness (PLANNING.md §8, 0.1) — becomes the regression suite",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "spike": "pnpm build && node dist/run-spike.js"
+  },
+  "dependencies": {
+    "@slinga/route-api": "workspace:*",
+    "@slinga/route-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

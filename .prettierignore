@@ -1,0 +1,5 @@
+dist/
+coverage/
+pnpm-lock.yaml
+harness/out/
+infra/graphhopper/data/

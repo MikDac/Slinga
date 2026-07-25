@@ -1,0 +1,32 @@
+{
+  "name": "@slinga/route-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Route generation service: candidate fan-out against the routing engine, filter/score/rank, GPX, caching",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev": "pnpm build && ROUTING_ENGINE=synthetic node dist/server.js",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@slinga/api-contract": "workspace:*",
+    "@slinga/route-core": "workspace:*",
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
