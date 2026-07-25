@@ -1,0 +1,37 @@
+# Local/staging stack (PLANNING.md §5.2): route service + self-hosted GraphHopper.
+# Caddy (TLS + static web assets) joins for the staging VPS; not needed locally.
+#
+# Before first start, download an OSM extract:
+#   ./graphhopper/download-extract.sh europe/liechtenstein   # tiny, for local dev
+#   ./graphhopper/download-extract.sh europe/germany/bayern  # more realistic
+
+services:
+  graphhopper:
+    image: israelhikingmap/graphhopper:9.1
+    command: -c /gh-config/config.yml -i /gh-data/extract.osm.pbf
+    volumes:
+      - ./graphhopper/config.yml:/gh-config/config.yml:ro
+      - ./graphhopper/data:/gh-data
+    ports:
+      - '8989:8989'
+    healthcheck:
+      test: ['CMD', 'curl', '-fs', 'http://localhost:8989/health']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 300s
+    restart: unless-stopped
+
+  route-api:
+    build:
+      context: ..
+      dockerfile: infra/route-api.Dockerfile
+    environment:
+      GRAPHHOPPER_URL: http://graphhopper:8989
+      PORT: '3000'
+    ports:
+      - '3000:3000'
+    depends_on:
+      graphhopper:
+        condition: service_healthy
+    restart: unless-stopped

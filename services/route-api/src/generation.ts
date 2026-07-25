@@ -1,0 +1,107 @@
+import type { RankingResult, RoutePreferences, ScoredCandidate } from '@slinga/route-core';
+import { DEFAULT_TOLERANCE, ScaleFactorTable, rankCandidates } from '@slinga/route-core';
+import type { RoundTripParams, RoutingEngine } from './engine/types.js';
+
+/**
+ * Candidate generation fan-out (PLANNING.md §3.3 steps 1 and 4).
+ *
+ * Fires N parallel round-trip calls across seeds and compass headings at a
+ * scale-corrected distance parameter, feeds realized/requested ratios back into
+ * the learned per-area scale table, ranks via route-core, and runs one
+ * refine-on-miss round when nothing lands within tolerance.
+ */
+
+export interface GenerateOptions {
+  fanout: number;
+  /** Seed offset so "shuffle" produces genuinely new candidates. */
+  seedBase?: number;
+  refineOnMiss?: boolean;
+}
+
+export class RouteGenerator {
+  constructor(
+    private readonly engine: RoutingEngine,
+    private readonly scaleTable: ScaleFactorTable = new ScaleFactorTable(),
+  ) {}
+
+  async generate(
+    startLon: number,
+    startLat: number,
+    prefs: RoutePreferences,
+    options: GenerateOptions,
+  ): Promise<RankingResult> {
+    const { fanout, seedBase = 0, refineOnMiss = true } = options;
+    const target = prefs.distanceM;
+
+    const requests: RoundTripParams[] = Array.from({ length: fanout }, (_, i) => ({
+      startLon,
+      startLat,
+      requestedDistanceM: this.scaleTable.correctedRequest(startLat, startLon, target),
+      seed: seedBase + i,
+      headingDeg: (360 / fanout) * i,
+      preferences: prefs,
+    }));
+
+    const candidates = await this.fanOut(requests, startLat, startLon);
+    let result = rankCandidates(candidates, prefs);
+
+    if (!result.hasValidCandidate && refineOnMiss && result.nearestMisses.length > 0) {
+      // One adjustment round (PLANNING.md §3.3 step 4): the first round's
+      // realized/requested observations are already folded into the scale table,
+      // so a fresh correctedRequest() now carries the measured error. Re-issue
+      // toward the near misses' headings at the corrected distance.
+      const refinements = result.nearestMisses
+        .slice(0, 3)
+        .map((miss: ScoredCandidate, i: number): RoundTripParams => ({
+          startLon,
+          startLat,
+          requestedDistanceM: this.scaleTable.correctedRequest(startLat, startLon, target),
+          seed: seedBase + fanout + i,
+          headingDeg: bearingOfCandidate(miss, startLon, startLat),
+          preferences: prefs,
+        }));
+      const refined = await this.fanOut(refinements, startLat, startLon);
+      result = rankCandidates([...candidates, ...refined], prefs);
+    }
+
+    return result;
+  }
+
+  tolerance(prefs: RoutePreferences): number {
+    return prefs.tolerance ?? DEFAULT_TOLERANCE;
+  }
+
+  private async fanOut(requests: RoundTripParams[], startLat: number, startLon: number) {
+    const settled = await Promise.allSettled(requests.map((r) => this.engine.roundTrip(r)));
+    const candidates = [];
+    for (let i = 0; i < settled.length; i++) {
+      const outcome = settled[i]!;
+      if (outcome.status !== 'fulfilled' || outcome.value === null) continue;
+      const candidate = outcome.value;
+      this.scaleTable.observe(
+        startLat,
+        startLon,
+        requests[i]!.requestedDistanceM,
+        candidate.distanceM,
+      );
+      candidates.push(candidate);
+    }
+    return candidates;
+  }
+}
+
+/** Rough compass bearing from start to the candidate's midpoint (reuse the miss's direction). */
+function bearingOfCandidate(
+  candidate: ScoredCandidate,
+  startLon: number,
+  startLat: number,
+): number {
+  const mid = candidate.coordinates[Math.floor(candidate.coordinates.length / 2)];
+  if (!mid) return 0;
+  const dLon = ((mid[0] - startLon) * Math.PI) / 180;
+  const lat1 = (startLat * Math.PI) / 180;
+  const lat2 = (mid[1] * Math.PI) / 180;
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}

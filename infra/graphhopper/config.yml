@@ -1,0 +1,31 @@
+# GraphHopper config for Slinga (PLANNING.md §5.1):
+# foot + hike profiles, flexible mode (custom models + round_trip need ch.disable),
+# encoded values required by the §4 filter system.
+
+graphhopper:
+  datareader.file: /gh-data/extract.osm.pbf
+  graph.location: /gh-data/graph-cache
+
+  # Encoded values consumed by custom models and per-edge path details (§4.2).
+  graph.encoded_values: surface, road_class, road_environment, smoothness, hike_rating, average_slope, foot_network
+
+  profiles:
+    - name: foot
+      custom_model_files: [foot.json]
+    - name: hike
+      custom_model_files: [hike.json]
+
+  # No CH profiles: all queries run in flexible mode (round_trip + custom_model require it).
+  profiles_ch: []
+
+  import.osm.ignored_highways: motorway, trunk
+  graph.dataaccess.default_type: RAM_STORE
+
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 0.0.0.0
+  admin_connectors:
+    - type: http
+      port: 8990

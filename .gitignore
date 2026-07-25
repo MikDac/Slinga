@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+
+# Harness output (reports are generated artifacts)
+harness/out/
+
+# Local env & secrets
+.env
+.env.*
+!.env.example
+
+# GraphHopper data (OSM extracts and built graphs are large artifacts)
+infra/graphhopper/data/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
