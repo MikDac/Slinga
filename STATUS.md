@@ -24,7 +24,7 @@ against real GraphHopper on the Sweden extract, using CI as the runtime.
 `ubuntu-latest` runners are the **private-repo class — 2 vCPU, 7 GB RAM, ~15 GB free
 disk** (not the 4 vCPU/16 GB public-repo class). The Sweden graph (~750 MB PBF,
 sized at 11 GB heap) cannot fit. Executed the documented fallback: the spike runs on
-**`europe/denmark`** (~180 MB PBF, 4 GB heap) with an equivalent Danish point matrix
+**`europe/denmark`** (469 MB PBF measured, 4 GB heap suffices) with an equivalent Danish point matrix
 (København ×2 + Aarhus + Odense urban, Lyngby + Ballerup suburban, Dragør + Helsingør
 waterfront, Bryrup rural, Hanstholm sparse). The Swedish point set remains in
 `harness/src/points.ts`; dispatch the workflow with `region=europe/sweden`, `heap=11g`
