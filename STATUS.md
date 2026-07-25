@@ -53,12 +53,53 @@ once a larger runner (or the VPS) exists.
 
 ## Measured results — M0 acceptance gate (real engine)
 
-_Pending: filled in from the `harness-real-engine` workflow run (this session)._
+**GATE: PASS** — `harness-real-engine` run #2, 2026-07-25 11:53 UTC
+([run 30156935570](https://github.com/MikDac/Slinga/actions/runs/30156935570),
+artifact `spike-report-2`: report.json/csv, gallery.html, routes.geojson, extract-info.txt).
+
+| Metric                                        | Measured           | Gate      |
+| --------------------------------------------- | ------------------ | --------- |
+| Urban/suburban cells ≥1 candidate within ±10% | **100%** (30/30)   | ≥90%      |
+| Urban/suburban cells with ≥3 candidates       | 93.3% (28/30)      | —         |
+| Cell latency p50 / p95 / max                  | 107 / 379 / 587 ms | p95 <3 s  |
+| All-category valid cells                      | 94% (47/50)        | (no gate) |
+
+Setup: GraphHopper 9.1 (foot profile, flexible, custom model, elevation off),
+`europe/denmark` extract (469 MB PBF, Last-Modified 2026-07-25 00:27 UTC,
+md5 `5a358c18142df8913f04fbe3dae04418`), graph build 68 s, Danish 10-point ×
+5-distance matrix, fanout 8 + refine-on-miss.
+**Hardware note:** Intel Xeon Platinum 8573C ×2, 7.8 GB RAM (GitHub runner) —
+latency indicative only until re-measured on the real VPS.
+
+**Error distribution per cell type (best-candidate |error|):**
+
+- urban (20 cells): all valid; 0.2–5.4%
+- suburban (10): all valid; 0.9–9.5% (the two 3 km cells produced only 2 deduped
+  candidates — small-network dedupe, not a distance failure)
+- waterfront (10): 9/10 valid; miss = Dragør @ 21 km, best 10.4% (peninsula: 7 of 11
+  engine calls unroutable — network genuinely can't close a 21 km loop there)
+- rural (5): 4/5 valid; miss = Bryrup @ 3 km, best 18.4% (village network too coarse
+  for a 3 km loop)
+- sparse (5): 4/5 valid; miss = Hanstholm @ 10 km, best 13.2%
+
+**Failure taxonomy:** 0 engine errors and 0 thrown exceptions across ~430 round-trip
+calls; nulls (unroutable seeds) concentrate at waterfront/21 km exactly where geometry
+predicts. All three misses are honest nearest-miss responses in non-urban categories —
+the §6.3 out-and-back fallback (isochrone method, Phase 1) is the designed answer there,
+not a scale-factor problem. Repeated-edge share of best candidates ≤9%, typically <4%:
+round_trip produces real loops.
+
+**Verdict:** the §3.3 fan-out + scale-learning + refine-on-miss pipeline meets the M0
+accuracy gate on a real engine and real OSM data with ~8× latency headroom on the
+weakest hardware we'll ever run on. Algorithm go.
 
 ## Next steps
 
-1. Run `harness-real-engine` on main; record results above; iterate if the gate fails
-   (pre-approved backstops: scale-factor correction tuning, §3.3 isochrone method).
-2. Remaining Phase 0 items: engine ops runbook hardening (0.3 hot-swap), staging URL +
-   per-PR preview deploys (0.4) — need a deploy target decision.
-3. M0 go/no-go review once the gate result is in.
+1. M0 go/no-go review by owner — measured basis above; algorithm side is a go.
+2. Sweden run of the same workflow when a ≥16 GB runner or the VPS exists
+   (`region=europe/sweden`, `heap=11g`, points auto-switch).
+3. Remaining Phase 0 items: staging URL + per-PR preview deploys (0.4, needs deploy
+   target decision), OSM refresh hot-swap runbook (0.3 — the workflow's
+   build→health→swap loop is the prototype).
+4. Phase 1 kickoff per PLANNING.md §8: route service hardening + web app map UI;
+   wire the isochrone out-and-back generator to close the non-urban misses.
