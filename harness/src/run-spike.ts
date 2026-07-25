@@ -4,7 +4,7 @@ import { GraphHopperEngine, RouteGenerator, SyntheticEngine } from '@slinga/rout
 import type { EngineCallOutcome, RoutingEngine } from '@slinga/route-api';
 import { ScaleFactorTable } from '@slinga/route-core';
 import { OrsEngine } from './ors.js';
-import { SPIKE_DISTANCES_M, SPIKE_POINTS } from './points.js';
+import { SPIKE_DISTANCES_M, spikePoints } from './points.js';
 import type { CandidateGeometry, CellResult } from './report.js';
 import {
   buildGalleryHtml,
@@ -54,7 +54,8 @@ async function main(): Promise<void> {
   const { engine, interRequestDelayMs } = makeEngine();
   const fanout = Number.parseInt(process.env.FANOUT ?? '8', 10);
   const generator = new RouteGenerator(engine, new ScaleFactorTable());
-  const meta = collectMeta(engine, fanout);
+  const { setName, points } = spikePoints();
+  const meta = collectMeta(engine, fanout, setName);
   const results: CellResult[] = [];
   const galleryCells: {
     cell: CellResult;
@@ -63,10 +64,10 @@ async function main(): Promise<void> {
   }[] = [];
 
   console.log(
-    `Spike run: engine=${engine.kind}:${engine.profile}, fanout=${fanout}, ` +
+    `Spike run: engine=${engine.kind}:${engine.profile}, points=${setName}, fanout=${fanout}, ` +
       `${meta.cpuModel} ×${meta.cpuCount}, ${meta.totalMemGb} GB RAM`,
   );
-  for (const point of SPIKE_POINTS) {
+  for (const point of points) {
     for (const distanceM of SPIKE_DISTANCES_M) {
       const counters = { ok: 0, null: 0, error: 0 };
       const onEngineResult = (outcome: EngineCallOutcome) => {

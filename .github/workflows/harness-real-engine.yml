@@ -9,16 +9,25 @@
 
 name: harness-real-engine
 
+# Region note: the target extract is Sweden (launch-region decision), but this repo's
+# GitHub-hosted runners are the private-repo class (2 vCPU, 7 GB RAM, ~15 GB disk) —
+# too small for the Sweden graph. Denmark is the recorded fallback (STATUS.md); dispatch
+# with region=europe/sweden + heap=11g once a larger runner exists.
+
 on:
   workflow_dispatch:
     inputs:
       region:
-        description: 'Geofabrik region path'
-        default: 'europe/sweden'
+        description: 'Geofabrik region path (point set derives from the basename)'
+        default: 'europe/denmark'
         type: string
       fanout:
         description: 'Round-trip candidates per cell'
         default: '8'
+        type: string
+      heap:
+        description: 'GraphHopper JVM max heap'
+        default: '4g'
         type: string
   schedule:
     - cron: '17 3 * * 1' # weekly Monday 03:17 UTC
@@ -28,8 +37,9 @@ env:
   # key below is our pragmatic pin). Record the actual file date from extract-info.txt.
   EXTRACT_PIN: '2026-07'
   GH_VERSION: '9.1'
-  REGION: ${{ inputs.region || 'europe/sweden' }}
+  REGION: ${{ inputs.region || 'europe/denmark' }}
   FANOUT: ${{ inputs.fanout || '8' }}
+  HEAP: ${{ inputs.heap || '4g' }}
 
 jobs:
   spike:
@@ -44,10 +54,10 @@ jobs:
           { echo '```'; nproc; grep -m1 'model name' /proc/cpuinfo || true; free -h; df -h /; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           FREE_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
           MEM_GB=$(free -g | awk '/Mem:/ {print $2}')
-          echo "free disk: ${FREE_GB} GB, RAM: ${MEM_GB} GB"
-          if [ "$FREE_GB" -lt 8 ] || [ "$MEM_GB" -lt 12 ]; then
-            echo "::error::Insufficient headroom for ${REGION} (need ≥8 GB disk, ≥12 GB RAM)."
-            echo "Fallback: re-dispatch with region=europe/denmark and record it in STATUS.md."
+          echo "free disk: ${FREE_GB} GB, RAM: ${MEM_GB} GB, heap: ${HEAP}"
+          # Denmark-scale needs ~5 GB disk (PBF + graph + JAR) and ~6 GB RAM (4g heap + OS).
+          if [ "$FREE_GB" -lt 5 ] || [ "$MEM_GB" -lt 6 ]; then
+            echo "::error::Insufficient headroom for ${REGION} (need ≥5 GB disk, ≥6 GB RAM)."
             exit 1
           fi
 
@@ -104,7 +114,7 @@ jobs:
 
       - name: Start GraphHopper & wait for graph (build on cache miss)
         run: |
-          java -Xmx11g -Xms2g \
+          java -Xmx${HEAP} -Xms1g \
             -Ddw.graphhopper.datareader.file=infra/graphhopper/data/extract.osm.pbf \
             -Ddw.graphhopper.graph.location=infra/graphhopper/data/graph-cache \
             -jar graphhopper-web.jar server infra/graphhopper/config.yml > gh-server.log 2>&1 &
@@ -128,7 +138,10 @@ jobs:
           exit 1
 
       - name: Run spike harness (full matrix, real engine)
-        run: ENGINE=graphhopper GRAPHHOPPER_URL=http://localhost:8989 FANOUT="$FANOUT" pnpm --filter @slinga/harness spike
+        run: |
+          POINTS=$(basename "$REGION")
+          ENGINE=graphhopper GRAPHHOPPER_URL=http://localhost:8989 FANOUT="$FANOUT" POINTS="$POINTS" \
+            pnpm --filter @slinga/harness spike
 
       - name: Report to job summary & log
         if: always()

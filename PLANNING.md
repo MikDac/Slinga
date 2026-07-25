@@ -49,7 +49,7 @@ Each item below materially affects design. Where the brief was silent, a working
 
 **Navigation.** **[ASSUMED]** MVP provides map display + GPX export (usable in Garmin/Apple Watch/komoot/any nav app) and a simple "follow along" screen (user's live position on the route polyline). Turn-by-turn voice navigation is Phase 3 — it is a large, separable subsystem.
 
-**Geography at launch.** **[DECIDED — 2026-07-25]** Launch region is **Europe**; the Phase 0 spike runs on the **Sweden** extract (see STATUS.md). A planet-scale graph is feasible (~40–60 GB RAM for GraphHopper) but pointlessly expensive for validation; expand region-by-region when justified. This choice affects server sizing only, not code.
+**Geography at launch.** **[DECIDED — 2026-07-25]** Launch region is **Europe**; the Phase 0 spike targets the **Sweden** extract (Denmark executed as the CI-runner fallback — see STATUS.md). A planet-scale graph is feasible (~40–60 GB RAM for GraphHopper) but pointlessly expensive for validation; expand region-by-region when justified. This choice affects server sizing only, not code.
 
 **Monetization.** **[OPEN]** Not needed for architecture now, but note: several "free" hosted tiers used for prototyping (openrouteservice, Stadia free, MapTiler free, GraphHopper free) are **non-commercial only**. The recommended production stack (self-hosted GraphHopper + OpenFreeMap tiles) is safe for commercial use, so monetizing later does not force a replatform. Revisit if any non-recommended component is swapped in.
 

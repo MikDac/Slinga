@@ -10,6 +10,7 @@ export interface RunMeta {
   engine: string;
   profile: string;
   fanout: number;
+  pointSet: string;
   graphhopperUrl?: string;
   node: string;
   platform: string;
@@ -55,11 +56,16 @@ export interface RunSummary {
   gatePass: boolean;
 }
 
-export function collectMeta(engine: { kind: string; profile: string }, fanout: number): RunMeta {
+export function collectMeta(
+  engine: { kind: string; profile: string },
+  fanout: number,
+  pointSet: string,
+): RunMeta {
   return {
     engine: engine.kind,
     profile: engine.profile,
     fanout,
+    pointSet,
     graphhopperUrl: process.env.GRAPHHOPPER_URL,
     node: process.version,
     platform: `${os.platform()} ${os.arch()}`,
@@ -166,7 +172,7 @@ export function buildGalleryHtml(
 <header>
   <h1>Slinga route-generation spike gallery</h1>
   <p class="meta">
-    engine=${escapeHtml(meta.engine)} (profile ${escapeHtml(meta.profile)}), fanout=${meta.fanout},
+    engine=${escapeHtml(meta.engine)} (profile ${escapeHtml(meta.profile)}), points=${escapeHtml(meta.pointSet)}, fanout=${meta.fanout},
     ${escapeHtml(meta.cpuModel)} ×${meta.cpuCount}, ${meta.totalMemGb} GB RAM, node ${escapeHtml(meta.node)},
     ${escapeHtml(meta.timestamp)}<br>${escapeHtml(meta.note)}
   </p>
