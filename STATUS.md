@@ -102,11 +102,26 @@ coordinates are kept as-is.
 
 ### Graph serving RSS (deploy-staging, VPS sizing)
 
-_PENDING CI RUN — decides 8 vs 16 GB VPS._
+Measured in [run 30206547902](https://github.com/MikDac/Slinga/actions/runs/30206547902)
+(prebuilt Sweden graph, 20 warm round_trip queries, first rung of the heap ladder):
+
+> `SERVE_HEAP=2g  RSS=1434 MiB  PEAK=1434 MiB`
+
+**Verdict: an 8 GB VPS is comfortably sufficient** — GraphHopper serves the whole
+Sweden graph in ~1.4 GiB warm RSS with a 2 GB max heap; route-api + Caddy + OS add
+well under 1 GB. The compose default ships `GH_HEAP=4g` for headroom. 16 GB is only
+needed if we ever import (rather than ship) graphs on the VPS or go multi-country.
+Graph import stays in CI (98 s) and the built graph is rsync'd — the VPS never builds.
 
 ### In-runner deploy-stack verification
 
-_PENDING CI RUN._
+**PASS** (same run): the exact deployable compose stack (GraphHopper JAR + prebuilt
+Sweden graph, route-api GHCR image, Caddy with Basic Auth) booted inside the runner —
+graphhopper healthy in ~6 s from the prebuilt graph; unauthenticated `/health`
+correctly rejected (401); authenticated health OK; **a real 5 km loop generated from
+the canonical Köpmangatan start through Caddy** (`hasValidCandidate: true`); web
+index served. Ship step correctly skipped (no DOMAIN/SSH secrets yet); the GHCR
+image `ghcr.io/mikdac/slinga-route-api` is published and the graph is cached.
 
 ## Deploy readiness
 
