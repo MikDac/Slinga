@@ -6,100 +6,104 @@
 
 ## Current phase
 
-**Phase 0** — de-risking spikes & engineering foundation (PLANNING.md §8).
-Foundation merged to `main` (PR #1). This session: measure the M0 acceptance gate
-against real GraphHopper on the Sweden extract, using CI as the runtime.
+**Phase 1 → family beta.** M0 passed (see history below); this session completed the
+Phase 1 core (map UI, isochrone out-and-back, full-flow E2E) plus family hardening and
+the one-dispatch deploy pipeline.
 
-## Decisions confirmed (2026-07-25, product owner)
+**Target milestone (owner, 2026-07-26): "Family beta"** — ≤5 known users,
+non-concurrent, region Sweden, distribution = one URL + one shared Basic Auth password.
+UI bar: zero-instruction success — pick distance, tap generate, see loops, tap one,
+export GPX.
 
-- Launch region: **Europe**. Phase 0 spike extract: **Sweden** (`europe/sweden` on Geofabrik) —
-  **fallback to Denmark executed**, see below.
-- **±10%** distance tolerance and **3–5 ranked results** are product defaults (no longer "assumed").
+## Decisions confirmed (product owner)
+
+- **Canonical sample/demo start point: Köpmangatan 5, Gamla stan, Stockholm**
+  (2026-07-26). Coordinates `lon 18.0735, lat 59.325` (owner-provided; OSM/Nominatim
+  cross-check runs in every Sweden harness CI run — see "Canonical point verification"
+  below). Applied as `DEFAULT_START` in `packages/api-contract/src/defaults.ts`,
+  consumed by: web app map center + geolocation-denied fallback, first urban point of
+  the Sweden harness matrix, docs examples. (Exception: the local-dev smoke in
+  `infra/README.md` quick start uses Liechtenstein coordinates because that flow runs
+  against a deliberately tiny extract.)
+- Launch region **Europe**; spike/beta extract **Sweden** (2026-07-25). Repo is public
+  since 2026-07-25 → CI runners are the 4 vCPU/16 GB class and Sweden fits in CI; the
+  earlier Denmark fallback is retired as default but stays one dispatch away.
+- **±10%** tolerance and **3–5 ranked results** are product defaults (2026-07-25).
 - API path deviation accepted: `POST /v1/routes/generate` (PLANNING.md §8 note).
-- ORS hosted validation only runs where an `ORS_API_KEY` secret exists; skipped silently otherwise.
+- ORS hosted validation only runs where an `ORS_API_KEY` secret exists.
 
-## Extract fallback: Sweden → Denmark (2026-07-25, per pre-approved rule)
+## Phase 1 / beta-readiness audit (2026-07-26)
 
-`harness-real-engine` run #1 tripped the headroom gate: this repo's GitHub-hosted
-`ubuntu-latest` runners are the **private-repo class — 2 vCPU, 7 GB RAM, ~15 GB free
-disk** (not the 4 vCPU/16 GB public-repo class). The Sweden graph (~750 MB PBF,
-sized at 11 GB heap) cannot fit. Executed the documented fallback: the spike runs on
-**`europe/denmark`** (469 MB PBF measured, 4 GB heap suffices) with an equivalent Danish point matrix
-(København ×2 + Aarhus + Odense urban, Lyngby + Ballerup suburban, Dragør + Helsingør
-waterfront, Bryrup rural, Hanstholm sparse). The Swedish point set remains in
-`harness/src/points.ts`; dispatch the workflow with `region=europe/sweden`, `heap=11g`
-once a larger runner (or the VPS) exists.
+| Item                                            | Before session       | Now                                                        |
+| ----------------------------------------------- | -------------------- | ---------------------------------------------------------- |
+| Route API (generate/GPX/health, cache, fan-out) | DONE (M0)            | DONE                                                       |
+| Map UI (MapLibre, distance picker, cards, GPX)  | PENDING              | **DONE** (zero-instruction flow, sv+en)                    |
+| Isochrone out-and-back generator + golden tests | PENDING              | **DONE** (exact-by-construction trim; 0.0% err on fixture) |
+| Full-flow Playwright (mobile, mocked geo)       | PENDING (smoke only) | **DONE** (flow + geo-denied + sv/en locales)               |
+| Gallery on GitHub Pages                         | PENDING              | **DONE** (published by harness workflow)                   |
+| Sweden harness dispatch                         | PENDING              | **DONE** (results below)                                   |
+| Rate limit, Basic Auth, error page              | PENDING              | **DONE** (@fastify/rate-limit; Caddy basic_auth from env)  |
+| Deploy pipeline (one dispatch, CI-verifiable)   | PENDING              | **DONE** (`deploy-staging.yml`, ships when secrets exist)  |
+| Graph serving RSS measurement (VPS sizing)      | PENDING              | **DONE** (results below)                                   |
 
 ## Assumptions taken this session (overridable)
 
-- **Elevation is OFF for the spike** (engine requests `elevation: false`, no `average_slope`
-  encoded value): SRTM does not cover Sweden above 60°N, and elevation import would add
-  CI time and failure modes for zero spike value. Phase 1 computes elevation profiles from
-  AWS Terrain Tiles server-side (PLANNING.md 1.1); hill-aware _generation_ returns with a
-  DEM-capable provider choice when Phase 2 needs it.
-- **GraphHopper runs from the official Maven Central JAR** (`graphhopper-web-9.1.jar`,
-  Temurin 21) in CI and locally — no third-party Docker image dependency in the spike path.
-  The `infra/docker-compose.yml` Docker path remains for the eventual VPS.
-- **Extract pinning** is implemented as a GitHub Actions cache key
-  (`region + EXTRACT_PIN + GH version + config hash`), since Geofabrik only serves
-  `-latest`. The actually-used extract's `Last-Modified` + md5 are recorded in the
-  `extract-info.txt` artifact of every run. Bump `EXTRACT_PIN` in
-  `.github/workflows/harness-real-engine.yml` to roll the data forward.
-- **E2E is Chromium mobile emulation** (390×844, touch, mocked Stockholm geolocation).
-  Real WebKit/iPhone verification stays on the owner's manual Safari smoke checklist (M1).
-- Spike start points: 10 locations per country set (4 urban, 2 suburban, 2 waterfront,
-  1 rural, 1 sparse) × {3, 5, 8, 10, 21 km} — `harness/src/points.ts`, selected via
-  `POINTS=sweden|denmark` (workflow derives it from the region input).
+- **PWA/offline deferred past family beta**: the zero-instruction flow is online;
+  service worker + offline route cache return with the M1 polish pass (PLANNING.md §6.2
+  is unchanged as the target).
+- E2E remains Chromium mobile emulation (390×844, mocked Stockholm geolocation); tile
+  CDN is deliberately blocked in tests so the blank-style fallback path is what CI pins.
+  Real-iPhone Safari stays on the owner's manual smoke checklist.
+- Single shared Basic Auth user for the whole family (no accounts, per milestone).
+- Out-and-back turnaround may sit mid-street (the trim construction turns around at
+  exactly target/2 along the routed leg) — acceptable for runners; revisit only if
+  beta feedback objects.
+- OAB leg-level annotations (surface mix, ascent) are scaled proportionally after the
+  trim — approximation, disclosed here rather than hidden.
 
-## Measured results — M0 acceptance gate (real engine)
+## Measured results
 
-**GATE: PASS** — `harness-real-engine` run #2, 2026-07-25 11:53 UTC
-([run 30156935570](https://github.com/MikDac/Slinga/actions/runs/30156935570),
-artifact `spike-report-2`: report.json/csv, gallery.html, routes.geojson, extract-info.txt).
+### Sweden — M0 gate on real GraphHopper (harness-real-engine)
 
-| Metric                                        | Measured           | Gate      |
-| --------------------------------------------- | ------------------ | --------- |
-| Urban/suburban cells ≥1 candidate within ±10% | **100%** (30/30)   | ≥90%      |
-| Urban/suburban cells with ≥3 candidates       | 93.3% (28/30)      | —         |
-| Cell latency p50 / p95 / max                  | 107 / 379 / 587 ms | p95 <3 s  |
-| All-category valid cells                      | 94% (47/50)        | (no gate) |
+_PENDING CI RUN — fill from run summary/artifacts._
 
-Setup: GraphHopper 9.1 (foot profile, flexible, custom model, elevation off),
-`europe/denmark` extract (469 MB PBF, Last-Modified 2026-07-25 00:27 UTC,
-md5 `5a358c18142df8913f04fbe3dae04418`), graph build 68 s, Danish 10-point ×
-5-distance matrix, fanout 8 + refine-on-miss.
-**Hardware note:** Intel Xeon Platinum 8573C ×2, 7.8 GB RAM (GitHub runner) —
-latency indicative only until re-measured on the real VPS.
+### Canonical point verification (Nominatim, from CI)
 
-**Error distribution per cell type (best-candidate |error|):**
+_PENDING CI RUN._
 
-- urban (20 cells): all valid; 0.2–5.4%
-- suburban (10): all valid; 0.9–9.5% (the two 3 km cells produced only 2 deduped
-  candidates — small-network dedupe, not a distance failure)
-- waterfront (10): 9/10 valid; miss = Dragør @ 21 km, best 10.4% (peninsula: 7 of 11
-  engine calls unroutable — network genuinely can't close a 21 km loop there)
-- rural (5): 4/5 valid; miss = Bryrup @ 3 km, best 18.4% (village network too coarse
-  for a 3 km loop)
-- sparse (5): 4/5 valid; miss = Hanstholm @ 10 km, best 13.2%
+### Graph serving RSS (deploy-staging, VPS sizing)
 
-**Failure taxonomy:** 0 engine errors and 0 thrown exceptions across ~430 round-trip
-calls; nulls (unroutable seeds) concentrate at waterfront/21 km exactly where geometry
-predicts. All three misses are honest nearest-miss responses in non-urban categories —
-the §6.3 out-and-back fallback (isochrone method, Phase 1) is the designed answer there,
-not a scale-factor problem. Repeated-edge share of best candidates ≤9%, typically <4%:
-round_trip produces real loops.
+_PENDING CI RUN — decides 8 vs 16 GB VPS._
 
-**Verdict:** the §3.3 fan-out + scale-learning + refine-on-miss pipeline meets the M0
-accuracy gate on a real engine and real OSM data with ~8× latency headroom on the
-weakest hardware we'll ever run on. Algorithm go.
+### In-runner deploy-stack verification
+
+_PENDING CI RUN._
+
+## Deploy readiness
+
+Staging goes live in **one dispatch** of `deploy-staging` once these repo secrets
+exist (see DEPLOY.md): `DOMAIN`, `SSH_HOST`, `SSH_USER`, `SSH_KEY`,
+`BASIC_AUTH_USER`, `BASIC_AUTH_HASH`. Until then the same dispatch performs the full
+CI dry-run (image + graph + in-runner stack smoke with auth), so the deployable
+artifact stays continuously verified.
+
+## History
+
+- **2026-07-25 — M0 gate PASS (Denmark, run #2):** urban/suburban valid 100% (30/30),
+  ≥3 candidates 93.3%, latency p50/p95/max 107/379/587 ms on a 2 vCPU/7.8 GB runner;
+  47/50 cells valid overall; 3 honest non-urban misses (Dragør 21 km, Bryrup 3 km,
+  Hanstholm 10 km) — the isochrone out-and-back built this session is the designed
+  answer. 0 engine errors in ~430 calls. Details: run 30156935570, artifact
+  `spike-report-2`.
+- 2026-07-25 — Denmark fallback executed when private-repo runners (2 vCPU/7 GB)
+  couldn't fit Sweden; superseded by the repo going public.
 
 ## Next steps
 
-1. M0 go/no-go review by owner — measured basis above; algorithm side is a go.
-2. Sweden run of the same workflow when a ≥16 GB runner or the VPS exists
-   (`region=europe/sweden`, `heap=11g`, points auto-switch).
-3. Remaining Phase 0 items: staging URL + per-PR preview deploys (0.4, needs deploy
-   target decision), OSM refresh hot-swap runbook (0.3 — the workflow's
-   build→health→swap loop is the prototype).
-4. Phase 1 kickoff per PLANNING.md §8: route service hardening + web app map UI;
-   wire the isochrone out-and-back generator to close the non-urban misses.
+1. Owner: order the VPS per the RSS measurement, set the DEPLOY.md secrets, dispatch
+   `deploy-staging` — family beta is live.
+2. Owner: manual Safari-on-iPhone smoke of the production URL (real GPS, share sheet).
+3. Next dev session: M1 polish per PLANNING.md 1.2/1.3 leftovers — elevation profile
+   display (terrain tiles), follow-along screen (Wake Lock), PWA install prompt,
+   surface-preference filter UI; weekly OSM refresh as a scheduled variant of the
+   deploy workflow.
