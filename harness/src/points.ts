@@ -1,3 +1,5 @@
+import { DEFAULT_START } from '@slinga/api-contract';
+
 /**
  * Spike matrix start points (PLANNING.md §8, 0.1), one set per supported extract,
  * each mirroring the category mix the plan asks for: urban core / suburban / rural /
@@ -16,7 +18,13 @@ export interface SpikePoint {
 }
 
 export const SWEDEN_POINTS: SpikePoint[] = [
-  { name: 'Stockholm Gamla Stan', category: 'urban', lon: 18.0708, lat: 59.3251 },
+  // Canonical demo start point (owner decision, see api-contract DEFAULT_START).
+  {
+    name: `${DEFAULT_START.label} (canonical)`,
+    category: 'urban',
+    lon: DEFAULT_START.lon,
+    lat: DEFAULT_START.lat,
+  },
   { name: 'Stockholm Vasastan', category: 'urban', lon: 18.0464, lat: 59.3434 },
   { name: 'Göteborg Inom Vallgraven', category: 'urban', lon: 11.9668, lat: 57.7038 },
   { name: 'Uppsala centrum', category: 'urban', lon: 17.6389, lat: 59.8586 },

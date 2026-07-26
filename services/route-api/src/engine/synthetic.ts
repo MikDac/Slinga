@@ -1,6 +1,6 @@
 import type { LonLat, RouteCandidate } from '@slinga/route-core';
 import { destinationPoint, pathLengthM } from '@slinga/route-core';
-import type { RoundTripParams, RoutingEngine } from './types.js';
+import type { OutAndBackParams, RoundTripParams, RoutingEngine } from './types.js';
 
 /**
  * Deterministic synthetic engine for tests and engine-less local dev.
@@ -65,6 +65,46 @@ export class SyntheticEngine implements RoutingEngine {
         asphalt: distanceM * 0.6,
         gravel: distanceM * 0.25,
         missing: distanceM * 0.15,
+      },
+    };
+  }
+
+  /**
+   * Synthetic isochrone out-and-back: accurate by construction (like the real
+   * isochrone method), with only mild per-seed jitter — so tests can rely on it
+   * as the guaranteed-accuracy fallback the plan describes (§3.2c, §6.3).
+   */
+  async outAndBack(params: OutAndBackParams): Promise<RouteCandidate | null> {
+    if (this.failingSeeds.has(params.seed)) return null;
+    const rng = mulberry32(params.seed + 101);
+    const jitter = 1 + (rng() - 0.5) * 0.06; // ±3% — isochrone-grade accuracy
+    const halfM = (params.targetDistanceM / 2) * jitter;
+
+    const points = 24;
+    const out: LonLat[] = [];
+    for (let i = 0; i <= points; i++) {
+      out.push(
+        destinationPoint(
+          [params.startLon, params.startLat],
+          params.headingDeg,
+          (halfM * i) / points,
+        ),
+      );
+    }
+    const coordinates: LonLat[] = [...out, ...[...out].reverse().slice(1)];
+    const distanceM = pathLengthM(coordinates);
+    return {
+      id: `syn-oab-${params.seed}-${Math.round(params.headingDeg)}`,
+      source: 'isochrone_oab',
+      coordinates,
+      distanceM,
+      ascendM: Math.round(distanceM * 0.008),
+      descendM: Math.round(distanceM * 0.008),
+      turnCount: Math.round(distanceM / 500),
+      surfaceBreakdown: {
+        asphalt: distanceM * 0.7,
+        gravel: distanceM * 0.2,
+        missing: distanceM * 0.1,
       },
     };
   }

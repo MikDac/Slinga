@@ -1,6 +1,11 @@
-import type { RankingResult, RoutePreferences, ScoredCandidate } from '@slinga/route-core';
+import type {
+  RankingResult,
+  RouteCandidate,
+  RoutePreferences,
+  ScoredCandidate,
+} from '@slinga/route-core';
 import { DEFAULT_TOLERANCE, ScaleFactorTable, rankCandidates } from '@slinga/route-core';
-import type { RoundTripParams, RoutingEngine } from './engine/types.js';
+import type { OutAndBackParams, RoundTripParams, RoutingEngine } from './engine/types.js';
 
 /**
  * Candidate generation fan-out (PLANNING.md §3.3 steps 1 and 4).
@@ -52,8 +57,23 @@ export class RouteGenerator {
       preferences: prefs,
     }));
 
-    const candidates = await this.fanOut(requests, startLat, startLon, options);
+    const loopRequests = prefs.routeType === 'out_and_back' ? [] : requests;
+    const candidates = await this.fanOut(loopRequests, startLat, startLon, options);
+
+    // Out-and-back candidates (isochrone method, §3.2c): first-class when requested,
+    // and generated up-front for "either" so ranking can compare topologies.
+    if (prefs.routeType !== 'loop') {
+      candidates.push(...(await this.outAndBackFanOut(startLon, startLat, prefs, options)));
+    }
+
     let result = rankCandidates(candidates, prefs);
+
+    // Honest fallback (§6.3): loops requested but none valid → offer accurate
+    // out-and-backs, ranked below any loop by the pipeline and labeled honestly.
+    if (prefs.routeType === 'loop' && !result.hasValidCandidate && this.engine.outAndBack) {
+      candidates.push(...(await this.outAndBackFanOut(startLon, startLat, prefs, options)));
+      result = rankCandidates(candidates, prefs);
+    }
 
     if (!result.hasValidCandidate && refineOnMiss && result.nearestMisses.length > 0) {
       // One adjustment round (PLANNING.md §3.3 step 4): the first round's
@@ -83,6 +103,44 @@ export class RouteGenerator {
 
   private correctedRequest(lat: number, lon: number, targetM: number): number {
     return this.scaleTable.correctedRequest(this.scaleNamespace, lat, lon, targetM);
+  }
+
+  /**
+   * Fan out K out-and-back requests across headings. Realized/requested ratios are
+   * NOT fed into the scale table: isochrone construction is accurate by design and
+   * its error model differs from round_trip's.
+   */
+  private async outAndBackFanOut(
+    startLon: number,
+    startLat: number,
+    prefs: RoutePreferences,
+    options: GenerateOptions,
+  ): Promise<RouteCandidate[]> {
+    const oab = this.engine.outAndBack?.bind(this.engine);
+    if (!oab) return [];
+    const k = Math.max(3, Math.floor(options.fanout / 3));
+    const seedBase = (options.seedBase ?? 0) + 500;
+    const requests: OutAndBackParams[] = Array.from({ length: k }, (_, i) => ({
+      startLon,
+      startLat,
+      targetDistanceM: prefs.distanceM,
+      seed: seedBase + i,
+      headingDeg: (360 / k) * i + 15,
+      preferences: prefs,
+    }));
+    const settled = await Promise.allSettled(requests.map((r) => oab(r)));
+    const candidates: RouteCandidate[] = [];
+    for (const outcome of settled) {
+      if (outcome.status !== 'fulfilled') {
+        options.onEngineResult?.('error');
+      } else if (outcome.value === null) {
+        options.onEngineResult?.('null');
+      } else {
+        options.onEngineResult?.('ok');
+        candidates.push(outcome.value);
+      }
+    }
+    return candidates;
   }
 
   private async fanOut(

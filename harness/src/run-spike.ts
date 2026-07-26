@@ -94,6 +94,10 @@ async function main(): Promise<void> {
           bestAbsErrorRatio: best ? Math.abs(best.distanceErrorRatio) : null,
           bestRepeatedEdgeShare: best ? best.repeatedEdgeShare : null,
           candidateErrorRatios: ranked.map((c) => round4(c.distanceErrorRatio)),
+          sourceMix: ranked.reduce<Record<string, number>>((acc, c) => {
+            acc[c.source] = (acc[c.source] ?? 0) + 1;
+            return acc;
+          }, {}),
           engineCalls: counters.ok + counters.null + counters.error,
           engineNulls: counters.null,
           engineErrors: counters.error,
@@ -117,6 +121,7 @@ async function main(): Promise<void> {
           bestAbsErrorRatio: null,
           bestRepeatedEdgeShare: null,
           candidateErrorRatios: [],
+          sourceMix: {},
           engineCalls: counters.ok + counters.null + counters.error,
           engineNulls: counters.null,
           engineErrors: counters.error,

@@ -40,6 +40,8 @@ export interface CellResult {
   bestRepeatedEdgeShare: number | null;
   /** Distance error ratios of ALL returned ranked candidates (distribution data). */
   candidateErrorRatios: number[];
+  /** Ranked candidates per generation strategy, e.g. { round_trip: 4, isochrone_oab: 1 }. */
+  sourceMix: Record<string, number>;
   engineCalls: number;
   engineNulls: number;
   engineErrors: number;

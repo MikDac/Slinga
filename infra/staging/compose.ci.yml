@@ -1,0 +1,8 @@
+# Override for the secret-less CI verification run (deploy-staging.yml):
+# plain HTTP on :8080 (DOMAIN=:8080 in .env), locally built route-api image.
+services:
+  caddy:
+    ports: !override
+      - '8080:8080'
+  route-api:
+    image: slinga-route-api:ci

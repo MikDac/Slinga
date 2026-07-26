@@ -1,0 +1,30 @@
+# Family-beta front door: TLS (automatic for a real DOMAIN), one shared Basic Auth
+# user, web statics + API reverse proxy, friendly bilingual error page.
+{$DOMAIN} {
+	encode zstd gzip
+
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	handle_errors {
+		rewrite * /error.html
+		file_server {
+			root /srv
+		}
+	}
+
+	handle /v1/* {
+		reverse_proxy route-api:3000
+	}
+
+	handle /health {
+		reverse_proxy route-api:3000
+	}
+
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}

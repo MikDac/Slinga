@@ -1,0 +1,61 @@
+# Family-beta staging stack (PLANNING.md §5.2, one VPS):
+# GraphHopper (official JAR, prebuilt graph shipped from CI) + route-api (GHCR image)
+# + Caddy (TLS, Basic Auth, web statics). Deployed to /opt/slinga by deploy-staging.yml.
+#
+# Required .env (written by the deploy workflow; see DEPLOY.md):
+#   DOMAIN, BASIC_AUTH_USER, BASIC_AUTH_HASH ($ escaped as $$), API_TAG, GH_HEAP
+
+services:
+  graphhopper:
+    image: eclipse-temurin:21-jre
+    command: >
+      java -Xmx${GH_HEAP:-4g}
+      -Ddw.graphhopper.datareader.file=/data/extract.osm.pbf
+      -Ddw.graphhopper.graph.location=/data/graph-cache
+      -jar /app/graphhopper-web.jar server /app/config.yml
+    volumes:
+      - ./graphhopper-app:/app:ro
+      - ./graph-data:/data
+    healthcheck:
+      # temurin-jre has no curl/wget; a TCP-open probe is enough (serving starts
+      # only after the prebuilt graph is loaded).
+      test: ['CMD-SHELL', 'bash -c "</dev/tcp/localhost/8989"']
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+    restart: unless-stopped
+
+  route-api:
+    image: ghcr.io/mikdac/slinga-route-api:${API_TAG:-latest}
+    environment:
+      GRAPHHOPPER_URL: http://graphhopper:8989
+      PORT: '3000'
+    depends_on:
+      graphhopper:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      DOMAIN: ${DOMAIN:?}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - ./error.html:/srv/error.html:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - route-api
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

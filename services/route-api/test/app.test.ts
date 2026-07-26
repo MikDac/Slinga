@@ -117,8 +117,9 @@ describe('route-api', () => {
   });
 
   it('returns 503 when the engine produces nothing at all', async () => {
+    // Cover round_trip seeds AND the out-and-back seed range (500+) — truly dead.
     const deadEngine = new SyntheticEngine({
-      failingSeeds: new Set(Array.from({ length: 100 }, (_, i) => i)),
+      failingSeeds: new Set(Array.from({ length: 700 }, (_, i) => i)),
     });
     const deadApp = buildApp({ config: TEST_CONFIG, engine: deadEngine });
     const res = await deadApp.inject({

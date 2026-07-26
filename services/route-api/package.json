@@ -20,6 +20,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^10.2.2",
     "@slinga/api-contract": "workspace:*",
     "@slinga/route-core": "workspace:*",
     "fastify": "^5.2.1"

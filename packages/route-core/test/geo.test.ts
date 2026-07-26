@@ -24,6 +24,25 @@ describe('destinationPoint', () => {
   });
 });
 
+describe('trimPolyline', () => {
+  it('cuts at the target length with an interpolated end point', async () => {
+    const { trimPolyline } = await import('../src/geo.js');
+    const start: LonLat = [11.5755, 48.1374];
+    const coords: LonLat[] = [start];
+    for (let i = 1; i <= 10; i++) coords.push(destinationPoint(start, 0, i * 500)); // 5 km line
+    const trimmed = trimPolyline(coords, 3250);
+    expect(pathLengthM(trimmed)).toBeCloseTo(3250, -1);
+    expect(trimmed.length).toBeLessThan(coords.length);
+  });
+
+  it('returns the whole line when already shorter than the target', async () => {
+    const { trimPolyline } = await import('../src/geo.js');
+    const start: LonLat = [11.5755, 48.1374];
+    const coords: LonLat[] = [start, destinationPoint(start, 0, 1000)];
+    expect(pathLengthM(trimPolyline(coords, 5000))).toBeCloseTo(1000, -1);
+  });
+});
+
 describe('pathLengthM', () => {
   it('sums segment lengths', () => {
     const start: LonLat = [11.5755, 48.1374];

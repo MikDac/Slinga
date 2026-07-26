@@ -1,0 +1,268 @@
+# One-dispatch staging deploy (family beta, PLANNING.md §5.2 + STATUS.md):
+# builds web + route-api image + the Sweden graph in CI, measures the graph's
+# actual serving RSS (VPS sizing), verifies the exact deployable stack inside
+# the runner, and — when DOMAIN/SSH secrets exist — ships it to the VPS over SSH
+# and brings up docker compose. Idempotent; safe to re-dispatch.
+#
+# Without secrets (DOMAIN, SSH_HOST, SSH_USER, SSH_KEY, BASIC_AUTH_USER,
+# BASIC_AUTH_HASH) the run still does everything verifiable in CI and skips
+# only the ship step. See DEPLOY.md.
+
+name: deploy-staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'Geofabrik region path'
+        default: 'europe/sweden'
+        type: string
+      build_heap:
+        description: 'JVM heap for graph import'
+        default: '10g'
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  EXTRACT_PIN: '2026-07'
+  GH_VERSION: '9.1'
+  REGION: ${{ inputs.region || 'europe/sweden' }}
+  BUILD_HEAP: ${{ inputs.build_heap || '10g' }}
+  IMAGE: ghcr.io/mikdac/slinga-route-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner headroom
+        run: |
+          nproc; free -h; df -h /
+          FREE_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          MEM_GB=$(free -g | awk '/Mem:/ {print $2}')
+          HEAP_GB=$(echo "$BUILD_HEAP" | tr -dc '0-9')
+          if [ "$FREE_GB" -lt 8 ] || [ "$MEM_GB" -lt $((HEAP_GB + 2)) ]; then
+            echo "::error::Insufficient headroom (free ${FREE_GB} GB disk, ${MEM_GB} GB RAM, heap ${BUILD_HEAP})."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install & build workspace
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Build route-api image
+        run: docker build -f infra/route-api.Dockerfile -t slinga-route-api:ci -t "$IMAGE:${GITHUB_SHA::7}" -t "$IMAGE:latest" .
+
+      - name: Push image to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:${GITHUB_SHA::7}"
+          docker push "$IMAGE:latest"
+
+      - name: Restore extract + graph cache
+        id: graph-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            infra/graphhopper/data
+            graphhopper-web.jar
+          key: gh-graph-${{ env.REGION }}-${{ env.EXTRACT_PIN }}-gh${{ env.GH_VERSION }}-${{ hashFiles('infra/graphhopper/config.yml') }}
+
+      - name: Download JAR + extract (cache miss)
+        run: |
+          if [ ! -f graphhopper-web.jar ]; then
+            curl -fsSL --retry 4 --retry-delay 5 -o graphhopper-web.jar \
+              "https://repo1.maven.org/maven2/com/graphhopper/graphhopper-web/${GH_VERSION}/graphhopper-web-${GH_VERSION}.jar"
+          fi
+          mkdir -p infra/graphhopper/data
+          PBF=infra/graphhopper/data/extract.osm.pbf
+          if [ ! -f "$PBF" ]; then
+            curl -fsSL --retry 4 --retry-delay 10 -o "$PBF" \
+              "https://download.geofabrik.de/${REGION}-latest.osm.pbf"
+            rm -rf infra/graphhopper/data/graph-cache
+          fi
+          ls -lh graphhopper-web.jar "$PBF"
+
+      - name: Build graph (import phase)
+        run: |
+          if [ -d infra/graphhopper/data/graph-cache ]; then
+            echo "Graph already built (cache hit)."; exit 0
+          fi
+          java -Xmx${BUILD_HEAP} \
+            -Ddw.graphhopper.datareader.file=infra/graphhopper/data/extract.osm.pbf \
+            -Ddw.graphhopper.graph.location=infra/graphhopper/data/graph-cache \
+            -jar graphhopper-web.jar server infra/graphhopper/config.yml > gh-import.log 2>&1 &
+          GH_PID=$!
+          START=$(date +%s)
+          for i in $(seq 1 720); do
+            if curl -fs http://localhost:8989/health >/dev/null 2>&1; then
+              echo "Graph built in $(( $(date +%s) - START )) s"; kill $GH_PID; wait $GH_PID 2>/dev/null || true; exit 0
+            fi
+            if ! kill -0 $GH_PID 2>/dev/null; then
+              echo "::error::Import died"; tail -60 gh-import.log; exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::Import timed out"; tail -60 gh-import.log; exit 1
+
+      - name: Save extract + graph cache
+        if: steps.graph-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            infra/graphhopper/data
+            graphhopper-web.jar
+          key: ${{ steps.graph-cache.outputs.cache-primary-key }}
+
+      # VPS-sizing measurement: load the prebuilt graph with a small heap ladder,
+      # warm it with real round_trip queries, record actual RSS (STATUS.md).
+      - name: Measure serving RSS (heap ladder)
+        run: |
+          measure() {
+            local HEAPTRY=$1
+            echo "--- trying serve heap $HEAPTRY"
+            java -Xmx$HEAPTRY \
+              -Ddw.graphhopper.datareader.file=infra/graphhopper/data/extract.osm.pbf \
+              -Ddw.graphhopper.graph.location=infra/graphhopper/data/graph-cache \
+              -jar graphhopper-web.jar server infra/graphhopper/config.yml > gh-serve.log 2>&1 &
+            SERVE_PID=$!
+            for i in $(seq 1 60); do
+              curl -fs http://localhost:8989/health >/dev/null 2>&1 && break
+              kill -0 $SERVE_PID 2>/dev/null || return 1
+              sleep 5
+            done
+            curl -fs http://localhost:8989/health >/dev/null 2>&1 || { kill $SERVE_PID 2>/dev/null; return 1; }
+            for p in "18.0735,59.325" "11.9668,57.7038" "12.9346,55.5867" "17.6389,59.8586"; do
+              LON=${p%,*}; LAT=${p#*,}
+              for seed in 1 2 3 4 5; do
+                curl -fs -X POST http://localhost:8989/route -H 'content-type: application/json' \
+                  -d "{\"profile\":\"foot\",\"points\":[[$LON,$LAT]],\"algorithm\":\"round_trip\",\"round_trip.distance\":8000,\"round_trip.seed\":$seed,\"ch.disable\":true,\"points_encoded\":false}" \
+                  >/dev/null || true
+              done
+            done
+            RSS_KB=$(awk '/VmRSS/ {print $2}' /proc/$SERVE_PID/status)
+            HWM_KB=$(awk '/VmHWM/ {print $2}' /proc/$SERVE_PID/status)
+            echo "SERVE_HEAP=$HEAPTRY RSS=$((RSS_KB/1024)) MiB PEAK=$((HWM_KB/1024)) MiB"
+            {
+              echo "## Graph serving memory (${REGION})"
+              echo ""
+              echo "- serve heap: \`$HEAPTRY\` — warm RSS: **$((RSS_KB/1024)) MiB**, peak: $((HWM_KB/1024)) MiB"
+              echo "- (import used \`$BUILD_HEAP\` heap; measured after 20 warm round_trip queries)"
+            } >> "$GITHUB_STEP_SUMMARY"
+            kill $SERVE_PID 2>/dev/null; wait $SERVE_PID 2>/dev/null || true
+            return 0
+          }
+          for H in 2g 3g 4g 6g; do
+            if measure $H; then exit 0; fi
+            echo "serve heap $H insufficient, trying larger…"
+            sleep 3
+          done
+          echo "::error::Could not serve the graph even with 6g heap"; tail -40 gh-serve.log; exit 1
+
+      # Verify the exact deployable stack inside the runner (no secrets needed):
+      # compose with local image, Caddy on :8080 with Basic Auth, real graph.
+      - name: Stage bundle & in-runner stack verification
+        run: |
+          STAGE=stage
+          mkdir -p $STAGE/graphhopper-app $STAGE/graph-data $STAGE/web
+          cp graphhopper-web.jar $STAGE/graphhopper-app/
+          cp infra/graphhopper/config.yml $STAGE/graphhopper-app/config.yml
+          cp -r infra/graphhopper/data/. $STAGE/graph-data/
+          cp -r apps/web/dist/. $STAGE/web/
+          cp infra/staging/compose.yml infra/staging/compose.ci.yml infra/staging/Caddyfile infra/staging/error.html $STAGE/
+          CI_HASH=$(docker run --rm caddy:2 caddy hash-password --plaintext 'ci-password')
+          {
+            echo "DOMAIN=:8080"
+            echo "BASIC_AUTH_USER=ci"
+            echo "BASIC_AUTH_HASH=$(printf '%s' "$CI_HASH" | sed 's/\$/\$\$/g')"
+            echo "API_TAG=ci"
+            echo "GH_HEAP=3g"
+          } > $STAGE/.env
+          cd $STAGE
+          docker compose -f compose.yml -f compose.ci.yml up -d
+          for i in $(seq 1 60); do
+            curl -fs -u ci:ci-password http://localhost:8080/health >/dev/null 2>&1 && break
+            sleep 5
+          done
+          echo "--- health (must require auth)"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health)" = "401"
+          curl -fs -u ci:ci-password http://localhost:8080/health
+          echo
+          echo "--- generate through Caddy"
+          curl -fs -u ci:ci-password -X POST http://localhost:8080/v1/routes/generate \
+            -H 'content-type: application/json' \
+            -d '{"start":{"lon":18.0735,"lat":59.325},"distanceM":5000}' | head -c 300
+          echo
+          echo "--- web index served"
+          curl -fs -u ci:ci-password http://localhost:8080/ | grep -qi slinga
+          docker compose -f compose.yml -f compose.ci.yml down
+          echo "IN-RUNNER STACK: OK" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check deploy secrets
+        id: gate
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+        run: |
+          if [ -n "$SSH_HOST" ] && [ -n "$DOMAIN" ]; then
+            echo "ship=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ship=false" >> "$GITHUB_OUTPUT"
+            echo "Ship skipped: DOMAIN/SSH secrets not configured (see DEPLOY.md)." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Ship to VPS
+        if: steps.gate.outputs.ship == 'true'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+          BASIC_AUTH_USER: ${{ secrets.BASIC_AUTH_USER }}
+          BASIC_AUTH_HASH: ${{ secrets.BASIC_AUTH_HASH }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new $SSH_USER@$SSH_HOST"
+          {
+            echo "DOMAIN=$DOMAIN"
+            echo "BASIC_AUTH_USER=$BASIC_AUTH_USER"
+            echo "BASIC_AUTH_HASH=$(printf '%s' "$BASIC_AUTH_HASH" | sed 's/\$/\$\$/g')"
+            echo "API_TAG=${GITHUB_SHA::7}"
+            echo "GH_HEAP=4g"
+          } > stage/.env
+          tar -C stage -czf bundle.tar.gz .
+          $SSH 'mkdir -p /opt/slinga'
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new bundle.tar.gz "$SSH_USER@$SSH_HOST:/opt/slinga/bundle.tar.gz"
+          $SSH 'cd /opt/slinga && tar -xzf bundle.tar.gz && rm bundle.tar.gz && docker compose pull && docker compose up -d --remove-orphans'
+          # The workflow only holds the hash, not the plaintext password — so the
+          # liveness check asserts TLS is up and the auth wall answers 401.
+          echo "Waiting for https://$DOMAIN/health …"
+          CODE=000
+          for i in $(seq 1 60); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/health" || echo 000)
+            [ "$CODE" != "000" ] && break
+            sleep 10
+          done
+          echo "Staging response code (expect 401 auth wall): $CODE"
+          test "$CODE" = "401"
+          echo "STAGING LIVE at https://$DOMAIN (Basic Auth)" >> "$GITHUB_STEP_SUMMARY"

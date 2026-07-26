@@ -11,6 +11,7 @@
     "spike": "pnpm build && node dist/run-spike.js"
   },
   "dependencies": {
+    "@slinga/api-contract": "workspace:*",
     "@slinga/route-api": "workspace:*",
     "@slinga/route-core": "workspace:*"
   },

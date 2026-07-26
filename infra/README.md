@@ -31,6 +31,19 @@ engine (same pipeline, fake geometry):
 pnpm --filter @slinga/route-api dev   # ROUTING_ENGINE=synthetic
 ```
 
+## Staging deploy
+
+`infra/staging/` holds the family-beta stack (GraphHopper JAR + route-api + Caddy
+with TLS/Basic Auth) shipped by `.github/workflows/deploy-staging.yml` — see
+[DEPLOY.md](../DEPLOY.md). Example request against it (canonical demo start,
+Köpmangatan 5 in Gamla stan):
+
+```bash
+curl -u familj -X POST https://<DOMAIN>/v1/routes/generate \
+  -H 'content-type: application/json' \
+  -d '{"start":{"lon":18.0735,"lat":59.325},"distanceM":5000}'
+```
+
 ## Real-engine spike in CI
 
 The `.github/workflows/harness-real-engine.yml` workflow measures the M0 acceptance

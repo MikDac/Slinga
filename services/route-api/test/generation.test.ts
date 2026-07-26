@@ -51,4 +51,44 @@ describe('RouteGenerator', () => {
     const result = await generator.generate(MUNICH.lon, MUNICH.lat, PREFS, { fanout: 12 });
     expect(result.candidates.length).toBeGreaterThan(0);
   });
+
+  it('serves an explicit out-and-back request via the isochrone method within tolerance', async () => {
+    const generator = new RouteGenerator(new SyntheticEngine());
+    const result = await generator.generate(
+      MUNICH.lon,
+      MUNICH.lat,
+      { routeType: 'out_and_back', distanceM: 8000 },
+      { fanout: 8 },
+    );
+    expect(result.hasValidCandidate).toBe(true);
+    const best = result.candidates[0]!;
+    expect(best.routeType).toBe('out_and_back');
+    expect(best.source).toBe('isochrone_oab');
+    expect(Math.abs(best.distanceErrorRatio)).toBeLessThanOrEqual(0.1);
+  });
+
+  it('falls back to accurate out-and-backs when no loop can be generated', async () => {
+    // Kill every round_trip seed (loop rounds use seeds 0..fanout+refine);
+    // out-and-back seeds start at 500 and survive.
+    const failingSeeds = new Set(Array.from({ length: 100 }, (_, i) => i));
+    const generator = new RouteGenerator(new SyntheticEngine({ failingSeeds }));
+    const result = await generator.generate(MUNICH.lon, MUNICH.lat, PREFS, { fanout: 8 });
+    expect(result.hasValidCandidate).toBe(true);
+    expect(result.candidates.every((c) => c.routeType === 'out_and_back')).toBe(true);
+    expect(result.candidates[0]!.source).toBe('isochrone_oab');
+  });
+
+  it('mixes both topologies for routeType "either"', async () => {
+    const generator = new RouteGenerator(new SyntheticEngine({ deviationBand: 0.2 }));
+    const result = await generator.generate(
+      MUNICH.lon,
+      MUNICH.lat,
+      { routeType: 'either', distanceM: 8000 },
+      { fanout: 12 },
+    );
+    const sources = new Set(result.candidates.map((c) => c.source));
+    expect(result.hasValidCandidate).toBe(true);
+    expect(sources.has('isochrone_oab')).toBe(true);
+    expect(sources.has('round_trip')).toBe(true);
+  });
 });

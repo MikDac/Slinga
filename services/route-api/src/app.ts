@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
+import fastifyRateLimit from '@fastify/rate-limit';
 import type {
   CandidateDto,
   GenerateRoutesRequest,
@@ -27,6 +28,11 @@ interface StoredRoute {
 
 export function buildApp({ config, engine }: AppDeps): FastifyInstance {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
+
+  // Family-beta abuse control: generous global ceiling, tighter on generation
+  // (each generate fans out 8–16 engine calls). Per-IP, in-memory — sufficient
+  // behind one Caddy for ≤5 known users; revisit only at real scale.
+  app.register(fastifyRateLimit, { max: 120, timeWindow: '1 minute' });
   const scaleTable = new ScaleFactorTable();
   const generator = new RouteGenerator(engine, scaleTable);
   const routeStore = new TtlStore<StoredRoute>(config.routeTtlS);
@@ -46,7 +52,10 @@ export function buildApp({ config, engine }: AppDeps): FastifyInstance {
 
   app.post<{ Body: GenerateRoutesRequest }>(
     '/v1/routes/generate',
-    { schema: { body: generateRoutesRequestSchema } },
+    {
+      schema: { body: generateRoutesRequestSchema },
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
     async (request, reply) => {
       const body = request.body;
       const prefs: RoutePreferences = {

@@ -27,6 +27,31 @@ export function pathLengthM(coords: readonly LonLat[]): number {
  * Destination point given start [lon, lat], initial bearing (degrees, clockwise from north)
  * and distance in meters. Used to place via-points / seed headings on a circle around the start.
  */
+/**
+ * Cut a polyline at exactly targetLengthM (interpolating the final point).
+ * Returns the input unchanged when it is already shorter. Used by the
+ * out-and-back generator: route past the turnaround, trim to half the target,
+ * walk back — distance accuracy by construction (PLANNING.md §3.2c).
+ */
+export function trimPolyline(coords: readonly LonLat[], targetLengthM: number): LonLat[] {
+  if (coords.length < 2 || targetLengthM <= 0) return [...coords];
+  const out: LonLat[] = [coords[0]!];
+  let acc = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const prev = coords[i - 1]!;
+    const next = coords[i]!;
+    const seg = haversineM(prev, next);
+    if (acc + seg >= targetLengthM) {
+      const t = seg === 0 ? 0 : (targetLengthM - acc) / seg;
+      out.push([prev[0] + (next[0] - prev[0]) * t, prev[1] + (next[1] - prev[1]) * t]);
+      return out;
+    }
+    acc += seg;
+    out.push(next);
+  }
+  return out;
+}
+
 export function destinationPoint(start: LonLat, bearingDeg: number, distanceM: number): LonLat {
   const [lon, lat] = start;
   const δ = distanceM / EARTH_RADIUS_M;

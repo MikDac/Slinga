@@ -9,17 +9,16 @@
 
 name: harness-real-engine
 
-# Region note: the target extract is Sweden (launch-region decision), but this repo's
-# GitHub-hosted runners are the private-repo class (2 vCPU, 7 GB RAM, ~15 GB disk) —
-# too small for the Sweden graph. Denmark is the recorded fallback (STATUS.md); dispatch
-# with region=europe/sweden + heap=11g once a larger runner exists.
+# Region note: the repo is public since 2026-07-25, so ubuntu-latest is the
+# 4 vCPU / 16 GB class and the Sweden graph fits — Sweden is the default again
+# (Denmark remains one dispatch away for comparison runs).
 
 on:
   workflow_dispatch:
     inputs:
       region:
         description: 'Geofabrik region path (point set derives from the basename)'
-        default: 'europe/denmark'
+        default: 'europe/sweden'
         type: string
       fanout:
         description: 'Round-trip candidates per cell'
@@ -27,19 +26,24 @@ on:
         type: string
       heap:
         description: 'GraphHopper JVM max heap'
-        default: '4g'
+        default: '10g'
         type: string
   schedule:
     - cron: '17 3 * * 1' # weekly Monday 03:17 UTC
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
 env:
   # Bump to force a fresh extract download (Geofabrik only serves -latest; the cache
   # key below is our pragmatic pin). Record the actual file date from extract-info.txt.
   EXTRACT_PIN: '2026-07'
   GH_VERSION: '9.1'
-  REGION: ${{ inputs.region || 'europe/denmark' }}
+  REGION: ${{ inputs.region || 'europe/sweden' }}
   FANOUT: ${{ inputs.fanout || '8' }}
-  HEAP: ${{ inputs.heap || '4g' }}
+  HEAP: ${{ inputs.heap || '10g' }}
 
 jobs:
   spike:
@@ -54,12 +58,25 @@ jobs:
           { echo '```'; nproc; grep -m1 'model name' /proc/cpuinfo || true; free -h; df -h /; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           FREE_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
           MEM_GB=$(free -g | awk '/Mem:/ {print $2}')
+          HEAP_GB=$(echo "$HEAP" | tr -dc '0-9')
           echo "free disk: ${FREE_GB} GB, RAM: ${MEM_GB} GB, heap: ${HEAP}"
-          # Denmark-scale needs ~5 GB disk (PBF + graph + JAR) and ~6 GB RAM (4g heap + OS).
-          if [ "$FREE_GB" -lt 5 ] || [ "$MEM_GB" -lt 6 ]; then
-            echo "::error::Insufficient headroom for ${REGION} (need ≥5 GB disk, ≥6 GB RAM)."
+          if [ "$FREE_GB" -lt 5 ] || [ "$MEM_GB" -lt $((HEAP_GB + 2)) ]; then
+            echo "::error::Insufficient headroom for ${REGION} with heap ${HEAP} (free ${FREE_GB} GB disk, ${MEM_GB} GB RAM)."
+            echo "Re-dispatch with a smaller heap and/or region=europe/denmark (see STATUS.md)."
             exit 1
           fi
+
+      # One fair-use Nominatim lookup documenting the canonical demo start point
+      # (Köpmangatan 5, Gamla stan — owner decision; local egress can't reach OSM).
+      - name: Verify canonical start point against OSM (informational)
+        continue-on-error: true
+        run: |
+          mkdir -p harness/out
+          curl -fsS --max-time 15 \
+            -H 'User-Agent: Slinga-dev-verification/0.1 (github.com/MikDac/Slinga)' \
+            'https://nominatim.openstreetmap.org/search?q=K%C3%B6pmangatan+5%2C+Gamla+stan%2C+Stockholm&format=jsonv2&limit=1' \
+            | tee harness/out/canonical-start-nominatim.json
+          echo
 
       - uses: pnpm/action-setup@v4
 
@@ -177,6 +194,20 @@ jobs:
             gh-server.log
           if-no-files-found: warn
 
+      # Gallery browsable at the repo's Pages URL (index.html = the SVG map gallery).
+      - name: Prepare Pages artifact
+        if: always()
+        run: |
+          mkdir -p pages-out
+          cp harness/out/gallery.html pages-out/index.html 2>/dev/null || echo '<h1>No gallery produced</h1>' > pages-out/index.html
+          cp harness/out/report.json harness/out/report.csv harness/out/routes.geojson pages-out/ 2>/dev/null || true
+
+      - name: Upload Pages artifact
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-out/
+
       - name: Save extract + graph cache
         if: always() && steps.graph-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -196,3 +227,21 @@ jobs:
           if [ -n "$ORS_API_KEY" ]; then
             ENGINE=ors FANOUT=4 pnpm --filter @slinga/harness spike || echo "::warning::ORS validation run failed (informational only)"
           fi
+
+  # Publish the SVG map gallery to GitHub Pages (enables Pages on first run).
+  publish-gallery:
+    needs: spike
+    if: always()
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Deploy gallery to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
