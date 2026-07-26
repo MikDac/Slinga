@@ -12,7 +12,7 @@ COPY packages/route-core packages/route-core
 COPY packages/api-contract packages/api-contract
 COPY services/route-api services/route-api
 RUN pnpm --filter @slinga/route-api... build && \
-    pnpm --filter @slinga/route-api --prod deploy /app
+    pnpm --filter @slinga/route-api --prod --legacy deploy /app
 
 FROM node:22-alpine
 WORKDIR /app

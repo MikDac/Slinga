@@ -228,10 +228,14 @@ jobs:
             ENGINE=ors FANOUT=4 pnpm --filter @slinga/harness spike || echo "::warning::ORS validation run failed (informational only)"
           fi
 
-  # Publish the SVG map gallery to GitHub Pages (enables Pages on first run).
+  # Publish the SVG map gallery to GitHub Pages. GITHUB_TOKEN cannot CREATE the
+  # Pages site ("Resource not accessible by integration") — the owner must enable
+  # Pages once (Settings → Pages → Source: GitHub Actions); until then this job
+  # is non-fatal and the gallery remains available as a run artifact.
   publish-gallery:
     needs: spike
     if: always()
+    continue-on-error: true
     runs-on: ubuntu-latest
     environment:
       name: github-pages
