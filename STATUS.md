@@ -34,17 +34,17 @@ export GPX.
 
 ## Phase 1 / beta-readiness audit (2026-07-26)
 
-| Item                                            | Before session       | Now                                                        |
-| ----------------------------------------------- | -------------------- | ---------------------------------------------------------- |
-| Route API (generate/GPX/health, cache, fan-out) | DONE (M0)            | DONE                                                       |
-| Map UI (MapLibre, distance picker, cards, GPX)  | PENDING              | **DONE** (zero-instruction flow, sv+en)                    |
-| Isochrone out-and-back generator + golden tests | PENDING              | **DONE** (exact-by-construction trim; 0.0% err on fixture) |
-| Full-flow Playwright (mobile, mocked geo)       | PENDING (smoke only) | **DONE** (flow + geo-denied + sv/en locales)               |
-| Gallery on GitHub Pages                         | PENDING              | **DONE** (published by harness workflow)                   |
-| Sweden harness dispatch                         | PENDING              | **DONE** (results below)                                   |
-| Rate limit, Basic Auth, error page              | PENDING              | **DONE** (@fastify/rate-limit; Caddy basic_auth from env)  |
-| Deploy pipeline (one dispatch, CI-verifiable)   | PENDING              | **DONE** (`deploy-staging.yml`, ships when secrets exist)  |
-| Graph serving RSS measurement (VPS sizing)      | PENDING              | **DONE** (results below)                                   |
+| Item                                            | Before session       | Now                                                          |
+| ----------------------------------------------- | -------------------- | ------------------------------------------------------------ |
+| Route API (generate/GPX/health, cache, fan-out) | DONE (M0)            | DONE                                                         |
+| Map UI (MapLibre, distance picker, cards, GPX)  | PENDING              | **DONE** (zero-instruction flow, sv+en)                      |
+| Isochrone out-and-back generator + golden tests | PENDING              | **DONE** (exact-by-construction trim; 0.0% err on fixture)   |
+| Full-flow Playwright (mobile, mocked geo)       | PENDING (smoke only) | **DONE** (flow + geo-denied + sv/en locales)                 |
+| Gallery on GitHub Pages                         | PENDING              | **BUILT** — needs one-time owner enablement (see next steps) |
+| Sweden harness dispatch                         | PENDING              | **DONE** (results below)                                     |
+| Rate limit, Basic Auth, error page              | PENDING              | **DONE** (@fastify/rate-limit; Caddy basic_auth from env)    |
+| Deploy pipeline (one dispatch, CI-verifiable)   | PENDING              | **DONE** (`deploy-staging.yml`, ships when secrets exist)    |
+| Graph serving RSS measurement (VPS sizing)      | PENDING              | **DONE** (results below)                                     |
 
 ## Assumptions taken this session (overridable)
 
@@ -65,11 +65,40 @@ export GPX.
 
 ### Sweden — M0 gate on real GraphHopper (harness-real-engine)
 
-_PENDING CI RUN — fill from run summary/artifacts._
+**GATE: PASS** — run #3, 2026-07-26 14:32 UTC
+([run 30206164618](https://github.com/MikDac/Slinga/actions/runs/30206164618),
+artifact `spike-report-3`).
+
+| Metric                                        | Measured            | Gate      |
+| --------------------------------------------- | ------------------- | --------- |
+| Urban/suburban cells ≥1 candidate within ±10% | **100%** (30/30)    | ≥90%      |
+| **All-category valid cells**                  | **100% (50/50)**    | (no gate) |
+| Urban/suburban cells with ≥3 candidates       | 93.3%               | —         |
+| Cell latency p50 / p95 / max                  | 67 / 1200 / 7638 ms | p95 <3 s  |
+
+Setup: Sweden extract 774 MB PBF (Last-Modified 2026-07-26 01:41 UTC, md5
+`29ae51b61e3416c3814673ac902f70ee`), **graph build 98 s** on AMD EPYC 7763 ×4 /
+15.6 GB (public runner); graph cached (~1.1 GB compressed) for future runs.
+
+**The isochrone out-and-back fallback closed every non-urban miss** from the Denmark
+run: Vaxholm 5/8 km, Västra Hamnen 8/21 km and Krokom 21 km are now valid with pure
+out-and-back best candidates (repeated-edge share 0.5 by construction, `engine_calls`
+11 = 8 loop + 3 OAB attempts). Canonical Köpmangatan cell: valid at all 5 distances,
+best error 1.0–5.0%, 149–415 ms.
+
+Watch item (non-blocking): one latency outlier — Göteborg 8 km at 7.6 s, where the
+loop round missed and the isochrone fallback ran a distance-isochrone on a dense
+urban graph. p95 stays at 1.2 s; revisit only if VPS numbers echo it (candidate fix:
+cache/limit isochrone bucket size or skip OAB when ≥5 loop candidates exist).
 
 ### Canonical point verification (Nominatim, from CI)
 
-_PENDING CI RUN._
+The lookup ran green in run #3 (step "Verify canonical start point against OSM");
+the raw Nominatim response is archived as `canonical-start-nominatim.json` in the
+`spike-report-3` artifact. Empirical verification on the real Sweden graph: routing
+from the owner-provided coordinates (`18.0735, 59.325`) snaps cleanly and produces
+valid candidates at every distance (row "Köpmangatan 5 … (canonical)" above) — the
+coordinates are kept as-is.
 
 ### Graph serving RSS (deploy-staging, VPS sizing)
 
@@ -102,8 +131,12 @@ artifact stays continuously verified.
 
 1. Owner: order the VPS per the RSS measurement, set the DEPLOY.md secrets, dispatch
    `deploy-staging` — family beta is live.
-2. Owner: manual Safari-on-iPhone smoke of the production URL (real GPS, share sheet).
-3. Next dev session: M1 polish per PLANNING.md 1.2/1.3 leftovers — elevation profile
+2. Owner: **enable GitHub Pages once** (Settings → Pages → Build and deployment →
+   Source: **GitHub Actions**) — `GITHUB_TOKEN` cannot create the Pages site itself
+   ("Resource not accessible by integration"); every harness run thereafter publishes
+   the gallery automatically (the job is non-fatal until then).
+3. Owner: manual Safari-on-iPhone smoke of the production URL (real GPS, share sheet).
+4. Next dev session: M1 polish per PLANNING.md 1.2/1.3 leftovers — elevation profile
    display (terrain tiles), follow-along screen (Wake Lock), PWA install prompt,
    surface-preference filter UI; weekly OSM refresh as a scheduled variant of the
    deploy workflow.
